@@ -1,23 +1,53 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="intro">
-  <h1>Open a case</h1>
-  <p>Each case is a real SWE-bench Verified issue. BugTrace checks out the repository
-    at the commit before the human fix, investigates it with read-only tools, and cites
-    the evidence behind every conclusion. If it proposes a patch, nothing changes until
-    you approve it.</p>
+  <h1>BugTrace investigates real software bugs, collects evidence, explains the likely cause
+    and proposes a fix for human approval.</h1>
+  <ol class="flow" aria-label="How an investigation works">
+    {% for step in flow %}<li>{{ step }}</li>{% endfor %}
+  </ol>
+  <p class="muted">{{ swe_bench_explainer }} Nothing is changed until a person approves the
+    suggested fix, and even then only BugTrace's own isolated copy is modified.</p>
+  {% include "partials/how_it_works.html" %}
 </section>
 
+<h2 class="section-title">Choose a bug to investigate</h2>
+<section class="cases">
+  {% for case, guide in cases %}
+  <article class="case-card">
+    <h3 class="case-title">{{ guide.title }}</h3>
+    <p class="project"><strong>{{ guide.project }}</strong> — {{ guide.project_about }}</p>
+    <p class="case-summary">{{ guide.summary }}</p>
+    <div class="case-actions">
+      <button type="button" class="btn" data-open-case="{{ case.instance_id }}">Investigate this bug</button>
+      <details class="tech">
+        <summary>Technical details</summary>
+        <dl class="tech-list">
+          <dt>SWE-bench ID</dt><dd class="mono">{{ case.instance_id }}</dd>
+          <dt>Repository</dt><dd class="mono">{{ case.repo }}</dd>
+          <dt>Base commit</dt><dd class="mono">{{ case.base_commit[:12] }}</dd>
+          {% if not guide.curated %}<dt>Summary</dt><dd>Excerpt of the original bug report</dd>{% endif %}
+        </dl>
+      </details>
+    </div>
+  </article>
+  {% else %}
+  <p class="empty">No bugs are loaded yet. Run <code>make seed</code> to load SWE-bench Verified cases.</p>
+  {% endfor %}
+</section>
+<p class="error-line" id="open-error" hidden></p>
+
 {% if investigations %}
-<section class="card">
-  <h2 class="card-title">Case files</h2>
+<section class="past">
+  <h2 class="section-title">Past investigations</h2>
   <table class="files">
-    <thead><tr><th>Case</th><th>Status</th><th>Opened</th><th></th></tr></thead>
+    <thead><tr><th>Bug</th><th>Outcome</th><th>Opened</th><th></th></tr></thead>
     <tbody>
     {% for item in investigations %}
       <tr>
-        <td class="mono">{{ item.instance_id }}</td>
-        <td><span class="badge badge-{{ item.status | lower }}">{{ item.status }}</span></td>
+        <td>{{ titles.get(item.instance_id, item.instance_id) }}
+          <span class="muted mono small">{{ item.instance_id }}</span></td>
+        <td><span class="badge badge-{{ item.status | lower }}" title="{{ item.status }}">{{ status_labels[item.status] }}</span></td>
         <td class="muted">{{ item.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
         <td><a href="/investigations/{{ item.investigation_id }}">View</a></td>
       </tr>
@@ -26,25 +56,6 @@
   </table>
 </section>
 {% endif %}
-
-<section class="cases">
-  {% for case in cases %}
-  <article class="case-card">
-    <header>
-      <span class="mono case-id">{{ case.instance_id }}</span>
-      <span class="repo">{{ case.repo }}</span>
-    </header>
-    <p class="statement-preview">{{ case.problem_statement | truncate(320) }}</p>
-    <footer>
-      <span class="muted mono">base {{ case.base_commit[:12] }}</span>
-      <button type="button" class="btn" data-open-case="{{ case.instance_id }}">Open case</button>
-    </footer>
-  </article>
-  {% else %}
-  <p class="empty">No cases are seeded. Run <code>make seed</code> to load SWE-bench Verified cases.</p>
-  {% endfor %}
-</section>
-<p class="error-line" id="open-error" hidden></p>
 {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', path='home.js') }}" defer></script>

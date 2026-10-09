@@ -2,39 +2,48 @@
 {% set p = inv.proposed_patch %}
 {% if p %}
 <div class="card patch">
-  <h2 class="card-title">Proposed patch</h2>
-  <p class="eyebrow">
-    <span class="mono">{{ p.patch_id }}</span> · attempt {{ p.attempt }}
-    · <span class="d-add">+{{ p.added_lines }}</span> <span class="d-del">&minus;{{ p.removed_lines }}</span>
-    · <span class="mono">{{ p.affected_files | join(", ") }}</span>
-  </p>
+  <h2 class="card-title">Suggested code fix</h2>
+  <h3 class="plain-heading">What BugTrace wants to change</h3>
   <p class="report-summary">{{ p.summary }}</p>
+  <h3 class="plain-heading">Why</h3>
   <p>{{ p.rationale }}</p>
+  <p><span class="muted">Files affected:</span>
+    {% for f in p.affected_files %}<span class="mono path">{{ f }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+    <span class="muted">· {{ p.added_lines }} line{{ "" if p.added_lines == 1 else "s" }} added, {{ p.removed_lines }} removed</span></p>
   {{ evidence_refs(p.evidence_ids, evidence_ids) }}
-  <pre class="diff">{% for line in p.diff.splitlines() %}<span class="{% if line.startswith('+++') or line.startswith('---') %}d-file{% elif line.startswith('@@') %}d-hunk{% elif line.startswith('+') %}d-add{% elif line.startswith('-') %}d-del{% endif %}">{{ line }}</span>{% endfor %}</pre>
+
   {% if inv.status == "AWAITING_APPROVAL" %}
   <div class="decision">
-    <p class="muted">Nothing has been applied. Approving applies exactly this diff inside the
-      investigation workspace (never committed or pushed). If evaluation is enabled and Docker
-      is available, the official SWE-bench harness then grades it in an isolated container.</p>
+    <p><strong>Approving only modifies BugTrace's isolated copy. Nothing is pushed to GitHub.</strong></p>
+    <p class="muted small">The fix is applied exactly as shown below and is never committed. Where
+      benchmark testing is available (a local or manual evaluation environment with Docker), the
+      project's own tests then check the fix. Rejecting leaves everything unchanged.</p>
     <div class="decision-buttons">
-      <button type="button" class="btn" data-decision="approve">Approve &amp; test</button>
-      <button type="button" class="btn btn-quiet" data-decision="reject">Reject</button>
+      <button type="button" class="btn" data-decision="approve">Approve fix</button>
+      <button type="button" class="btn btn-quiet" data-decision="reject">Reject fix</button>
     </div>
   </div>
   {% elif inv.approval %}
-  <p class="decision-made">Decision: <strong>{{ inv.approval.decision | upper }}</strong>
+  <p class="decision-made">Decision: <strong>{{ "Approved" if inv.approval.decision == "approve" else "Rejected" }}</strong>
     <span class="muted">{{ inv.approval.decided_at.strftime("%Y-%m-%d %H:%M UTC") }}</span></p>
   {% endif %}
   {% if inv.patch_result %}
-  <h3>Result</h3>
-  <p>{{ "Applied" if inv.patch_result.applied else "Not applied" }}: {{ inv.patch_result.message }}</p>
-  {% if inv.patch_result.stat %}<pre class="excerpt">{{ inv.patch_result.stat }}</pre>{% endif %}
+  <p>{{ "Applied to BugTrace's isolated copy" if inv.patch_result.applied else "Not applied" }}: {{ inv.patch_result.message }}</p>
   {% endif %}
+
+  <details class="tech code-changes">
+    <summary>View code changes</summary>
+    <pre class="diff">{% for line in p.diff.splitlines() %}<span class="{% if line.startswith('+++') or line.startswith('---') %}d-file{% elif line.startswith('@@') %}d-hunk{% elif line.startswith('+') %}d-add{% elif line.startswith('-') %}d-del{% endif %}">{{ line }}</span>{% endfor %}</pre>
+    <p class="secondary">Patch <span class="mono">{{ p.patch_id }}</span> · attempt {{ p.attempt }}
+      · sha256 <span class="mono">{{ p.sha256[:16] }}</span>
+      · <span class="d-add">+{{ p.added_lines }}</span> <span class="d-del">&minus;{{ p.removed_lines }}</span></p>
+    {% if inv.patch_result and inv.patch_result.stat %}<pre class="excerpt">{{ inv.patch_result.stat }}</pre>{% endif %}
+  </details>
 </div>
 {% elif inv.patch_error and terminal %}
 <div class="card patch">
-  <h2 class="card-title">Proposed patch</h2>
-  <p class="empty">No valid patch was proposed: {{ inv.patch_error }}</p>
+  <h2 class="card-title">Suggested code fix</h2>
+  <p class="empty">No safe code fix was produced.</p>
+  <p class="secondary">No valid patch was proposed: {{ inv.patch_error }}</p>
 </div>
 {% endif %}

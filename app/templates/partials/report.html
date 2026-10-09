@@ -2,29 +2,34 @@
 {% set r = inv.report %}
 {% if r %}
 <div class="card report report-{{ r.status | lower }}">
-  <h2 class="card-title">Root-cause report</h2>
-  <p class="eyebrow">
-    <span class="badge badge-report-{{ r.status | lower }}">{{ r.status }}</span>
-    Confidence <strong>{{ r.confidence }}</strong>
-    · {{ r.tool_calls }} tool calls · {{ r.iterations }} iteration{{ "" if r.iterations == 1 else "s" }}
-  </p>
+  <h2 class="card-title">What it found</h2>
+  {% if r.status == "COMPLETED" %}
+  <h3 class="plain-heading">Why this bug happens</h3>
+  {% else %}
+  <h3 class="plain-heading">Investigation incomplete: best explanation so far</h3>
+  {% endif %}
   <p class="report-summary">{{ r.summary }}</p>
+  <p class="muted">{{ confidence_text(r.confidence) }}</p>
   {% if r.claims %}
-  <h3>Grounded claims</h3>
+  <h3 class="plain-heading">Why BugTrace thinks this</h3>
   <ol class="claims">
     {% for c in r.claims %}<li><p>{{ c.statement }}</p>{{ evidence_refs(c.evidence_ids, evidence_ids) }}</li>{% endfor %}
   </ol>
   {% else %}
-  <p class="empty">The report contains no evidence-backed claims.</p>
+  <p class="empty">None of the statements in this report were backed by collected evidence, so none are shown.</p>
   {% endif %}
   {% if r.open_questions %}
-  <h3>Open questions</h3>
+  <h3 class="plain-heading">Still unclear</h3>
   <ul>{% for q in r.open_questions %}<li>{{ q }}</li>{% endfor %}</ul>
   {% endif %}
+  <p class="secondary">Root-cause report <span class="badge badge-report-{{ r.status | lower }}">{{ r.status }}</span>
+    · confidence <span class="mono">{{ r.confidence }}</span>
+    · {{ r.tool_calls }} repository checks (tool calls) · {{ r.iterations }} round{{ "" if r.iterations == 1 else "s" }} (iterations)
+    · {{ r.claims | length }} grounded claim{{ "" if r.claims | length == 1 else "s" }}</p>
 </div>
 {% elif terminal %}
 <div class="card report">
-  <h2 class="card-title">Root-cause report</h2>
-  <p class="empty">No root-cause report was produced.</p>
+  <h2 class="card-title">What it found</h2>
+  <p class="empty">No explanation of the bug was produced.</p>
 </div>
 {% endif %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ inv.case.instance_id }} · BugTrace{% endblock %}
+{% block title %}{{ guide.title }} · BugTrace{% endblock %}
 {% block head %}
 {% if not terminal %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}
 {% endblock %}
@@ -9,47 +9,60 @@
      data-last-seq="{{ last_seq }}"
      data-terminal="{{ 'true' if terminal else 'false' }}">
 
-  <section class="case-header card">
+  <section class="case-header">
     <div class="case-header-top">
-      <div>
-        <p class="eyebrow">CASE FILE</p>
-        <h1 class="mono">{{ inv.case.instance_id }}</h1>
-        <p class="muted">
-          {{ inv.case.repo }} · base <span class="mono">{{ inv.case.base_commit[:12] }}</span>
-          · opened {{ inv.created_at.strftime("%Y-%m-%d %H:%M UTC") }}
-          {% if inv.case.issue_url and inv.case.issue_url.startswith("https://") %}· <a href="{{ inv.case.issue_url }}" rel="noopener noreferrer">issue</a>{% endif %}
-        </p>
-      </div>
+      <p class="eyebrow">BUG INVESTIGATION</p>
       <p class="stream-state" id="stream-state" aria-live="polite">
         {{ "Final state" if terminal else "Connecting…" }}
       </p>
     </div>
-    <details class="statement">
-      <summary>Problem statement</summary>
-      <pre>{{ inv.case.problem_statement }}</pre>
-    </details>
+    <h1>{{ guide.title }}</h1>
+    <p class="project"><strong>{{ guide.project }}</strong> — {{ guide.project_about }}</p>
+    <p class="case-summary">{{ guide.summary }}</p>
+    <div class="disclosures">
+      <details class="tech statement">
+        <summary>Original bug report</summary>
+        <pre>{{ inv.case.problem_statement }}</pre>
+      </details>
+      <details class="tech">
+        <summary>Technical details</summary>
+        <p class="small">{{ swe_bench_explainer }}</p>
+        <dl class="tech-list">
+          <dt>SWE-bench ID</dt><dd class="mono">{{ inv.case.instance_id }}</dd>
+          <dt>Repository</dt><dd class="mono">{{ inv.case.repo }}</dd>
+          <dt>Base commit</dt><dd class="mono">{{ inv.case.base_commit }}</dd>
+          <dt>Investigation</dt><dd class="mono">{{ inv.investigation_id }}</dd>
+          <dt>Opened</dt><dd>{{ inv.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</dd>
+          {% if inv.case.issue_url and inv.case.issue_url.startswith("https://") %}
+          <dt>Issue</dt><dd><a href="{{ inv.case.issue_url }}" rel="noopener noreferrer">{{ inv.case.issue_url }}</a></dd>
+          {% endif %}
+        </dl>
+      </details>
+    </div>
   </section>
 
   <section data-panel="status" aria-live="polite">{% include "partials/status.html" %}</section>
 
   <div class="board">
+    <div class="board-main">
+      <section data-panel="report">{% include "partials/report.html" %}</section>
+      <section data-panel="suspects">{% include "partials/suspects.html" %}</section>
+      <section data-panel="hypothesis">{% include "partials/hypothesis.html" %}</section>
+      <section data-panel="proposal">{% include "partials/proposal.html" %}</section>
+      <section data-panel="evaluation">{% include "partials/evaluation.html" %}</section>
+      <section data-panel="evidence">{% include "partials/evidence.html" %}</section>
+    </div>
+
     <section class="card timeline-card">
-      <h2 class="card-title">Timeline</h2>
+      <h2 class="card-title">What BugTrace did</h2>
       <ol class="timeline" id="timeline">
         {% for item in timeline %}{{ item | safe }}{% endfor %}
       </ol>
       <p class="empty" id="timeline-empty" {% if timeline %}hidden{% endif %}>No events recorded yet.</p>
     </section>
-
-    <div class="board-main">
-      <section data-panel="report">{% include "partials/report.html" %}</section>
-      <section data-panel="evaluation">{% include "partials/evaluation.html" %}</section>
-      <section data-panel="proposal">{% include "partials/proposal.html" %}</section>
-      <section data-panel="hypothesis">{% include "partials/hypothesis.html" %}</section>
-      <section data-panel="suspects">{% include "partials/suspects.html" %}</section>
-      <section data-panel="evidence">{% include "partials/evidence.html" %}</section>
-    </div>
   </div>
+
+  {% include "partials/how_it_works.html" %}
 </div>
 {% endblock %}
 {% block scripts %}

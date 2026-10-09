@@ -419,7 +419,7 @@ def test_evaluator_result_maps_to_case_status_and_verdict(
     assert stored.status == final
     assert stored.evaluation == result
     # The verdict for a closed case comes from the persisted result, not the event.
-    shown = verdict(InvestigationResponse.from_stored(stored)).title
+    shown = verdict(InvestigationResponse.from_stored(stored)).label
     assert shown == title
 
 

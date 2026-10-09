@@ -1,6 +1,6 @@
 {% macro evidence_refs(ids, known) -%}
 {% if ids %}
-<p class="refs">Evidence:
+<p class="refs">Supporting evidence:
   {% for id in ids %}{% if id in known %}<a class="ref mono" href="#{{ id }}">{{ id }}</a>{% else %}<span class="ref mono">{{ id }}</span>{% endif %}{% endfor %}
 </p>
 {% endif %}

@@ -1,24 +1,26 @@
 {% from "partials/macros.html" import evidence_refs %}
 <div class="card">
-  <h2 class="card-title">Suspects</h2>
+  <h2 class="card-title">Likely causes</h2>
   {% if inv.suspects %}
   <ol class="suspects">
     {% for s in inv.suspects | sort(attribute="rank") %}
     <li class="suspect{% if s.rank == 1 %} suspect-primary{% endif %}">
       <div class="suspect-head">
         <span class="rank">#{{ s.rank }}</span>
-        {% if s.rank == 1 %}<span class="label">PRIMARY SUSPECT</span>{% endif %}
-        <span class="mono">{{ s.path }}{% if s.symbol %}::{{ s.symbol }}{% endif %}</span>
-        <span class="score" title="Distinct supporting evidence plus code-evidence bonus">score {{ s.score }}</span>
+        {% if s.rank == 1 %}<span class="label">Most likely cause</span>{% endif %}
       </div>
       <p>{{ s.reason }}</p>
+      <p class="secondary">
+        {% if s.rank == 1 %}PRIMARY SUSPECT · {% endif %}{% if s.symbol %}<code>{{ s.symbol }}</code> in {% endif %}<span class="mono path">{{ s.path }}</span>
+        · <span title="Distinct supporting evidence plus code-evidence bonus">score {{ s.score }}</span>
+      </p>
       {{ evidence_refs(s.evidence_ids, evidence_ids) }}
     </li>
     {% endfor %}
   </ol>
   {% elif terminal %}
-  <p class="empty">No suspects were identified.</p>
+  <p class="empty">No likely causes were identified.</p>
   {% else %}
-  <p class="empty">No suspects yet.</p>
+  <p class="empty">No likely causes yet. BugTrace is still collecting evidence.</p>
   {% endif %}
 </div>

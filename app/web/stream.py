@@ -25,7 +25,7 @@ from app.api.investigations import Service
 from app.services.investigations import InvestigationService
 from app.storage.models import TERMINAL_STATUSES
 from app.storage.sqlite import InvestigationNotFoundError
-from app.web.render import render_event, render_panels
+from app.web.render import evidence_sources, render_event, render_panels
 
 router = APIRouter(prefix="/api/investigations")
 
@@ -56,11 +56,12 @@ async def investigation_stream(
         stored = await asyncio.to_thread(service.get, investigation_id)
         cursor = min(cursor, len(stored.events) - 1)
         new = stored.events[cursor + 1 :]
+        sources = evidence_sources(stored) if new else {}
         for seq, event in enumerate(new, start=cursor + 1):
             payload = {
                 "seq": seq,
                 "event": event.model_dump(mode="json"),
-                "html": render_event(event, seq),
+                "html": render_event(event, seq, sources),
             }
             yield sse("timeline", payload, id=seq)
         cursor += len(new)

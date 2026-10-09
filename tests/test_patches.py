@@ -618,6 +618,12 @@ def test_page_shows_patch_controls_and_outcomes(penv: dict[str, Any]) -> None:
         assert 'data-decision="approve"' in page and 'data-decision="reject"' in page
         assert '<span class="d-del">-    return sum(items) + 1  # BUG: off by one</span>' in page
         assert 'data-terminal="false"' in page  # stream stays open while waiting
+        # Plain summary and the approval boundary come first; the raw diff is disclosed.
+        assert (
+            "Approving only modifies BugTrace's isolated copy. Nothing is pushed to GitHub." in page
+        )
+        summary_at = page.index("What BugTrace wants to change")
+        assert summary_at < page.index("View code changes") < page.index('<pre class="diff">')
 
         _decide(client, first, "reject")
         page = client.get(f"/investigations/{first}").text

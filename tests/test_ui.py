@@ -6,7 +6,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +15,7 @@ from app.agent.models import (
     AgentEvent,
     Claim,
     Confidence,
+    EventType,
     Evidence,
     EvidenceType,
     FinalReport,
@@ -29,6 +30,7 @@ from app.main import create_app
 from app.services.investigations import InvestigationService
 from app.storage.models import InvestigationStatus
 from app.storage.sqlite import InvestigationStore
+from app.web import plain
 from app.web.stream import investigation_stream
 from tests.test_agent import CASE_STATEMENT
 from tests.test_investigations_api import INSTANCE_ID, FakeBackend, StaticEvaluator, _assert_no_gold
@@ -261,9 +263,9 @@ def test_unresolved_without_findings_fabricates_nothing(
 ) -> None:
     inv = _seed(_store(ui_client), ui_env["case"], FINISHED, report=None, findings=False)
     html = _page(ui_client, inv)
-    assert "No root-cause report was produced." in html
-    assert "No suspects were identified." in html
-    assert "No hypothesis was formed." in html
+    assert "No explanation of the bug was produced." in html
+    assert "No likely causes were identified." in html
+    assert "No explanation was formed." in html
     assert "PRIMARY SUSPECT" not in html
     assert "Grounded claims" not in html
 
@@ -303,9 +305,9 @@ def test_running_page_is_live_and_cancellable(
     assert 'data-last-seq="-1"' in html
     assert "PREPARING WORKSPACE" in html
     assert "data-cancel" in html
-    assert "No suspects yet." in html
+    assert "No likely causes yet." in html
     assert "No events recorded yet." in html
-    assert "Root-cause report" not in html
+    assert "Root-cause report" not in html and "What it found" not in html
 
 
 def test_page_escapes_untrusted_text(ui_client: TestClient, ui_env: dict[str, Any]) -> None:
@@ -314,6 +316,120 @@ def test_page_escapes_untrusted_text(ui_client: TestClient, ui_env: dict[str, An
     assert "<script>alert" not in html and "&lt;script&gt;" in html
     assert "<img src=x>" not in html
     assert "adds an extra 1 <b>" not in html
+
+
+def test_home_leads_with_plain_language_and_hides_ids(
+    ui_client: TestClient, ui_env: dict[str, Any]
+) -> None:
+    page = ui_client.get("/").text
+    assert "investigates real software bugs, collects evidence, explains the likely cause" in page
+    for step in plain.FLOW:
+        assert f"<li>{step}</li>" in page
+    assert "SWE-bench, a benchmark built from real open-source software issues" in page
+    # Uncurated case: the title comes from the report's first line, without markdown.
+    title = "compute_total returns one more than the sum of its items."
+    assert f'<h3 class="case-title">{title}</h3>' in page
+    # The SWE-bench ID, repository and commit sit inside "Technical details", after the title.
+    card = page[page.index('<article class="case-card">') :]
+    details = card[card.index("<summary>Technical details</summary>") :]
+    assert card.index(title) < card.index("Technical details")
+    assert INSTANCE_ID in details.split("</details>")[0]
+    assert "owner/fixture" in details.split("</details>")[0]
+    assert "Investigate this bug" in page
+    assert "How it works technically" in page
+
+
+def test_curated_guides_match_seeded_cases_and_stay_display_only() -> None:
+    root = Path(__file__).resolve().parent.parent
+    seeded = {
+        json.loads(line)["instance_id"]
+        for line in (root / "data" / "cases.jsonl").read_text().splitlines()
+        if line.strip()
+    }
+    guides = json.loads(plain.GUIDES_PATH.read_text())
+    assert set(guides["cases"]) <= seeded
+    for entry in guides["cases"].values():
+        assert set(entry) == {"title", "summary"}  # no room for reference-fix fields
+    case = PublicCase(
+        instance_id="astropy__astropy-12907",
+        repo="astropy/astropy",
+        problem_statement="Modeling's `separability_matrix` ...",
+        base_commit="a" * 40,
+    )
+    guide = plain.guide_for(case)
+    assert guide.curated and guide.project == "Astropy"
+    assert guide.project_about == "an open-source Python library for astronomy."
+    assert "separability_matrix" not in guide.title  # plain title, not the raw report title
+    # Display-only: no agent-side or MCP module loads the curated copy or the wording module.
+    for package in ("agent", "mcp_servers", "workspace", "data", "evaluation"):
+        for source in (root / "app" / package).rglob("*.py"):
+            text = source.read_text()
+            assert "case_guides" not in text and "app.web" not in text, source
+
+
+def test_report_excerpt_skips_template_noise() -> None:
+    statement = (
+        "Title line\n<!-- hidden template -->\n### Description\n```python\ncode()\n```\n"
+        "The `formats` option is ignored."
+    )
+    assert plain.report_title(statement) == "Title line"
+    assert plain.report_excerpt(statement) == "The formats option is ignored."
+    assert plain.report_title("<!-- only -->\n\n") == "Untitled bug report"
+
+
+def test_timeline_and_status_use_plain_language(
+    ui_client: TestClient, ui_env: dict[str, Any]
+) -> None:
+    inv = _seed(_store(ui_client), ui_env["case"], FINISHED, report="PARTIAL")
+    page = _page(ui_client, inv)
+    event = page[page.index('data-seq="0"') :].split("</li>")[0]
+    headline = "Prepared a clean copy of the software project"
+    assert headline in event and "REPO READY" in event  # raw title stays, as secondary text
+    assert event.index(headline) < event.index("REPO READY")
+    assert 'class="event-headline">repo_ready' not in page
+    assert "Bug not confirmed fixed" in page and "Investigation incomplete" in page
+    assert "Repository checks" in page and "Tool calls</dt>" not in page
+
+
+@pytest.mark.parametrize(
+    ("source", "title", "expected"),
+    [
+        ("search_code", "NEW EVIDENCE", "Searched the code for relevant logic"),
+        ("find_symbol", "NEW EVIDENCE", "Located a potentially related function"),
+        ("problem_statement", "NEW EVIDENCE", "Read the original bug report"),
+        ("unknown_tool", "NEW EVIDENCE", "Found new evidence"),
+    ],
+)
+def test_evidence_events_are_described_by_what_was_checked(
+    source: str, title: str, expected: str
+) -> None:
+    event = AgentEvent(type="evidence_found", title=title, message="m", metadata={"id": "ev-1"})
+    assert plain.event_headline(event, {"ev-1": source}) == expected
+
+
+def test_every_event_type_has_plain_wording() -> None:
+    for event_type in get_args(EventType):
+        event = AgentEvent(type=event_type, title="RAW TITLE", message="m")
+        headline = plain.event_headline(event, {})
+        assert headline and headline != "RAW TITLE" and event_type not in headline
+    error = AgentEvent(type="error", title="NO VALID PATCH", message="m")
+    assert plain.event_headline(error, {}) == "Could not produce a safe code fix"
+
+
+def test_evidence_explains_what_where_and_why(
+    ui_client: TestClient, ui_env: dict[str, Any]
+) -> None:
+    inv = _seed(_store(ui_client), ui_env["case"], FINISHED, report="COMPLETED")
+    page = _page(ui_client, inv)
+    item = page[page.index('id="ev-aaaaaaaaaaaa"') :].split("</li>")[0]
+    assert "A section of the code BugTrace read" in item
+    assert "Where:</span> pkg/core.py, lines 14–15" in item
+    assert "Why it matters:" in item and "Supports likely cause #1" in item
+    # The evidence ID and raw excerpt are secondary, inside a disclosure.
+    disclosed = item[item.index("<summary>Show the evidence</summary>") :]
+    assert "ev-aaaaaaaaaaaa" in disclosed and "def compute_total" in disclosed
+    assert "Why this bug happens" in page and "Why BugTrace thinks this" in page
+    assert "Likely causes" in page and "Most likely cause" in page
 
 
 def test_page_missing_and_invalid_ids(ui_client: TestClient) -> None:

@@ -1,0 +1,59 @@
+{
+  "_note": "Display-only copy for the UI. Written from each public bug report (problem statement) only; never from the reference fix. Never passed to the agent.",
+  "projects": {
+    "astropy/astropy": {"name": "Astropy", "about": "an open-source Python library for astronomy."},
+    "django/django": {"name": "Django", "about": "an open-source Python framework for building websites."},
+    "sympy/sympy": {"name": "SymPy", "about": "an open-source Python library for symbolic mathematics."},
+    "scikit-learn/scikit-learn": {"name": "scikit-learn", "about": "an open-source Python library for machine learning."},
+    "matplotlib/matplotlib": {"name": "Matplotlib", "about": "an open-source Python library for drawing charts and plots."},
+    "pytest-dev/pytest": {"name": "pytest", "about": "an open-source tool for testing Python code."},
+    "sphinx-doc/sphinx": {"name": "Sphinx", "about": "an open-source tool for generating software documentation."},
+    "psf/requests": {"name": "Requests", "about": "an open-source Python library for making web requests."},
+    "pydata/xarray": {"name": "xarray", "about": "an open-source Python library for labelled multi-dimensional data."},
+    "pylint-dev/pylint": {"name": "Pylint", "about": "an open-source tool that checks Python code for mistakes."},
+    "pallets/flask": {"name": "Flask", "about": "an open-source Python framework for small web applications."},
+    "mwaskom/seaborn": {"name": "seaborn", "about": "an open-source Python library for statistical charts."}
+  },
+  "cases": {
+    "astropy__astropy-12907": {
+      "title": "Wrong result when checking which parts of a combined model are independent",
+      "summary": "Astropy can combine small mathematical models into bigger ones and report which inputs affect which outputs. When a combined model is placed inside another combined model, it wrongly reports that independent parts depend on each other."
+    },
+    "astropy__astropy-13033": {
+      "title": "Confusing error message when a required column is removed",
+      "summary": "A time-series table can require certain columns. When one of them is removed, the error message contradicts itself (\"expected 'time' … but found 'time'\") instead of saying that a required column is missing."
+    },
+    "astropy__astropy-13236": {
+      "title": "Structured data is silently converted to a special column type",
+      "summary": "When a table is given structured data (records with several named fields), Astropy silently converts it into a special column type. The report argues this conversion is no longer needed and asks for the behaviour to change. This is a requested change rather than a crash."
+    },
+    "astropy__astropy-13398": {
+      "title": "Positions of nearby objects such as satellites look inaccurate",
+      "summary": "Converting from Earth-fixed coordinates to what an observer on the ground sees (height above the horizon and compass direction) gives results that look wrong for nearby objects such as satellites. The report proposes a more direct way to do this conversion."
+    },
+    "astropy__astropy-13453": {
+      "title": "HTML table export ignores number formatting",
+      "summary": "When exporting a table you can ask for numbers to be formatted, for example rounded to two decimal places. This works for formats such as CSV, but the setting is ignored when exporting to HTML."
+    },
+    "astropy__astropy-13579": {
+      "title": "Position conversion goes wrong after taking a slice of the data",
+      "summary": "Astropy can convert real-world positions (sky position and wavelength) into pixel positions in an image. The conversion is correct for the full 3D data but gives a wrong answer for one direction after selecting a single 2D wavelength slice."
+    },
+    "astropy__astropy-13977": {
+      "title": "Numbers with units refuse to let other data types handle a calculation",
+      "summary": "Astropy represents numbers with physical units, such as 5 metres. When such a number is combined with a compatible value from another library, Astropy raises an error straight away instead of letting the other library try the calculation, which Python normally allows."
+    },
+    "astropy__astropy-14096": {
+      "title": "Misleading error message in custom sky-position classes",
+      "summary": "When a developer extends Astropy's sky-position object with their own property, and that property uses something that does not exist, the error message names the property instead of the missing item. This points the developer to the wrong place."
+    },
+    "astropy__astropy-14182": {
+      "title": "Extra header rows are not supported for reStructuredText tables",
+      "summary": "Astropy can write tables as reStructuredText, a plain-text documentation format. Other text formats accept an option to add extra header rows, such as a row of units. The same option makes reStructuredText output crash."
+    },
+    "astropy__astropy-14309": {
+      "title": "Crash when guessing a file's format",
+      "summary": "Astropy can guess a file's format from its name. After a recent change, some calls to this feature crash with an \"index out of range\" error, which broke another project's automated tests."
+    }
+  }
+}

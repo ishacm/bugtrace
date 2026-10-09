@@ -19,7 +19,7 @@
       const body = await response.json();
       window.location.href = `/investigations/${body.investigation_id}`;
     } catch (err) {
-      errorLine.textContent = `Could not open case: ${err.message}`;
+      errorLine.textContent = `Could not start the investigation: ${err.message}`;
       errorLine.hidden = false;
       button.disabled = false;
     }

@@ -1,0 +1,31 @@
+<details class="tech how-it-works">
+  <summary>How it works technically</summary>
+  <dl class="tech-list">
+    <dt>Bug source</dt>
+    <dd>Cases are SWE-bench Verified instances. The agent receives only the issue text, the
+      repository name and the base commit (<code>PublicCase</code>). The reference patch,
+      test patch and <code>FAIL_TO_PASS</code>/<code>PASS_TO_PASS</code> lists stay
+      evaluator-only.</dd>
+    <dt>Agent</dt>
+    <dd>One LangGraph state graph: understand issue → plan → search → inspect → hypothesis →
+      verify evidence (bounded loop) → root cause → propose patch → interrupt for approval →
+      apply. Default limits are 4 iterations, 30 tool calls and 2 patch attempts.</dd>
+    <dt>Repository checks</dt>
+    <dd>The model has no shell. A read-only MCP server exposes <code>list_directory</code>,
+      <code>read_file</code>, <code>search_code</code>, <code>find_symbol</code>,
+      <code>list_test_files</code>, <code>git_log</code>, <code>git_show</code>,
+      <code>git_diff</code> and <code>check_patch</code>, scoped to one per-investigation git
+      clone. Each result gets a deterministic evidence ID.</dd>
+    <dt>Grounding</dt>
+    <dd>Claims citing no known evidence ID are dropped. Suspects on paths no tool returned are
+      rejected. Confidence (LOW/MEDIUM/HIGH) follows explicit evidence rules.</dd>
+    <dt>Approval and patching</dt>
+    <dd>Diffs are strictly validated and checked with <code>git apply --check</code>. A separate
+      MCP server applies only the diff whose sha256 matches the recorded approval. Nothing is
+      committed or pushed.</dd>
+    <dt>Evaluation</dt>
+    <dd>The service, not the agent, runs the pinned official SWE-bench harness in Docker.
+      RESOLVED comes only from the harness's own verdict. Benchmark evaluation runs only in a
+      local or manual evaluation environment.</dd>
+  </dl>
+</details>

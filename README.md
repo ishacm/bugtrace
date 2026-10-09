@@ -36,7 +36,7 @@ prompt. BugTrace is built around three rules:
 
 | | What | Status |
 |---|---|---|
-| ✅ **Implemented and tested** | Safe SWE-bench case adapter, isolated git workspaces, read-only MCP server (9 tools), LangGraph agent, grounding checks, patch validation, approval gate, privileged patch server, evaluator boundary, SQLite persistence and checkpoints, FastAPI, SSE UI, CI, deterministic regression suite, Gemini and Vertex backends, Dockerfile, Cloud Run service template | 331 tests pass and 2 opt-in tests are skipped; CI covers lint and tests |
+| ✅ **Implemented and tested** | Safe SWE-bench case adapter, isolated git workspaces, read-only MCP server (9 tools), LangGraph agent, grounding checks, patch validation, approval gate, privileged patch server, evaluator boundary, SQLite persistence and checkpoints, FastAPI, SSE UI, CI, deterministic regression suite, Gemini and Vertex backends, Dockerfile, Cloud Run service template | 341 tests pass and 2 opt-in tests are skipped; CI covers lint and tests |
 | 🧪 **Validated locally against real data** | 10 real cases seeded. Real repository checkout at `base_commit`. A live Gemini run on `astropy__astropy-12907` reached a COMPLETED report with MEDIUM confidence (11 tool calls, 5 grounded claims). The real SWE-bench reference row was fetched and its base commit verified. The production entrypoint ran from a copy of the image contents | Single runs, not benchmarks |
 | ⚠️ **Limited by the environment** | Live runs often hit Gemini 429/503 errors, and those runs degrade to PARTIAL/LOW with no patch, as designed. **No end-to-end live patch proposal has been produced.** Docker is not installed, so **no real SWE-bench harness verdict has been produced** and the container image has not been built | Code paths are tested with a stub model and a fake harness |
 | ☁️ **Not deployed** | Cloud Run and Vertex AI: config, docs and tests exist. **Nothing has been deployed to GCP, and no live Vertex AI call has been made.** GitHub Actions workflows are written and checked with actionlint, but have not run on GitHub | Deployment path only |
@@ -224,7 +224,7 @@ uv run python scripts/seed_cases.py --limit 20     # more cases
 ### Run an investigation
 
 ```bash
-make dev        # UI at http://127.0.0.1:8000; pick a case and click "Open case"
+make dev        # UI at http://127.0.0.1:8000; pick a bug and click "Investigate this bug"
 ```
 
 Or run one from the CLI. The record is exported to `var/investigations/<id>.json`:
@@ -233,9 +233,17 @@ Or run one from the CLI. The record is exported to `var/investigations/<id>.json
 make investigate CASE=astropy__astropy-12907
 ```
 
-In the UI, a COMPLETED investigation with a valid patch stops at **AWAITING APPROVAL**
-and shows the diff. **Approve & test** applies it in that investigation's workspace only.
-**Reject** leaves the workspace byte-identical.
+In the UI, a COMPLETED investigation with a valid patch stops at **Waiting for your
+approval** (status AWAITING_APPROVAL). It shows a plain summary of the suggested fix, and
+the raw diff is under "View code changes". **Approve fix** applies it in that
+investigation's workspace only. **Reject fix** leaves the workspace byte-identical.
+
+The UI explains everything in plain language first: the bug, what BugTrace found, the
+likely causes, the evidence and the suggested fix. Technical details such as evidence
+IDs, file paths, commit hashes, tool-call counts and the raw diff sit in a secondary
+style or behind "Technical details" disclosures. Bug titles and summaries for the seeded
+cases are hand-written display copy (`app/web/case_guides.json`), based only on the
+public bug reports. Other cases fall back to the report's own first line.
 
 ### Tests, lint and regression
 
@@ -319,7 +327,7 @@ app/evaluation/    gold data, harness runner, metrics, reports (evaluator only)
 app/services/      investigation lifecycle, approvals, evaluation hand-off
 app/storage/       SQLite store and status machine
 app/api/, app/web/ REST endpoints, pages, SSE stream
-tests/             331 tests: security, leakage, regression scenarios, CI and cloud config
+tests/             341 tests: security, leakage, regression scenarios, CI and cloud config
 docs/              design docs (architecture, agent, MCP, data, API, evaluation, deployment)
                    and PORTFOLIO.md (summary + CV bullets)
 tasks/, PROGRESS.md  the spec-driven task log the project was built from

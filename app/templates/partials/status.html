@@ -1,22 +1,32 @@
 <div class="verdict verdict-{{ verdict.kind }}">
   <div class="verdict-main">
-    <span class="badge badge-{{ inv.status | lower }}">{{ inv.status }}</span>
-    <strong class="verdict-title">{{ verdict.title }}</strong>
-    <span class="verdict-detail">{{ verdict.detail }}</span>
+    <p class="eyebrow">What BugTrace is doing now</p>
+    <p class="verdict-line">
+      <span class="badge badge-{{ inv.status | lower }}">{{ status_label }}</span>
+      <strong class="verdict-title">{{ verdict.title }}</strong>
+    </p>
+    <p class="verdict-detail">{{ verdict.detail }}</p>
+    <ol class="flow flow-progress" aria-label="Progress">
+      {% for step, state in flow %}<li class="flow-{{ state }}">{{ step }}</li>{% endfor %}
+    </ol>
+    <p class="secondary">Status <span class="mono">{{ inv.status }}</span> · <span class="mono">{{ verdict.label }}</span></p>
   </div>
   <dl class="metrics">
-    <div><dt>Iteration</dt><dd>{{ inv.iteration }}</dd></div>
-    <div><dt>Tool calls</dt><dd>{{ inv.tool_call_count }}</dd></div>
+    <div><dt>Repository checks</dt><dd>{{ inv.tool_call_count }}</dd></div>
     <div><dt>Evidence</dt><dd>{{ inv.evidence | length }}</dd></div>
-    <div><dt>Suspects</dt><dd>{{ inv.suspects | length }}</dd></div>
+    <div><dt>Likely causes</dt><dd>{{ inv.suspects | length }}</dd></div>
+    <div><dt>Rounds</dt><dd>{{ inv.iteration }}</dd></div>
   </dl>
   {% if "CANCELLED" in inv.allowed_transitions %}
   <button type="button" class="btn btn-quiet" data-cancel>Cancel investigation</button>
   {% endif %}
 </div>
 {% if inv.limits_reached or inv.agent_errors %}
-<ul class="notes">
-  {% for limit in inv.limits_reached %}<li><strong>Limit reached:</strong> {{ limit }}</li>{% endfor %}
-  {% for err in inv.agent_errors %}<li><strong>Agent error:</strong> {{ err }}</li>{% endfor %}
-</ul>
+<details class="tech notes">
+  <summary>{{ (inv.limits_reached | length) + (inv.agent_errors | length) }} technical note(s): limits reached or model errors</summary>
+  <ul>
+    {% for limit in inv.limits_reached %}<li><strong>Limit reached:</strong> {{ limit }}</li>{% endfor %}
+    {% for err in inv.agent_errors %}<li><strong>Agent error:</strong> {{ err }}</li>{% endfor %}
+  </ul>
+</details>
 {% endif %}
