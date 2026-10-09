@@ -86,6 +86,7 @@ class FinalReport(BaseModel):
 
 EventType = Literal[
     "case_started",
+    "repo_ready",
     "plan_created",
     "search_started",
     "evidence_found",

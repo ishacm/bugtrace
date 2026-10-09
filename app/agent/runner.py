@@ -1,5 +1,6 @@
 """Run one investigation through the graph and persist a JSON record of it."""
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -48,7 +49,9 @@ async def run_investigation(
     repo_client: RepoToolClient,
     max_iterations: int,
     max_tool_calls: int,
+    on_update: Callable[[InvestigationState], Awaitable[None]] | None = None,
 ) -> InvestigationState:
+    """Run the graph to completion. `on_update` sees the full state after every node."""
     executor = ToolExecutor(repo_client, max_calls=max_tool_calls)
     graph = build_graph(model, executor)
     state = initial_state(
@@ -57,8 +60,14 @@ async def run_investigation(
         max_iterations=max_iterations,
         max_tool_calls=max_tool_calls,
     )
-    result = await graph.ainvoke(state, {"recursion_limit": recursion_limit(max_iterations)})
-    return InvestigationState(**result)
+    config = {"recursion_limit": recursion_limit(max_iterations)}
+    if on_update is None:
+        return InvestigationState(**await graph.ainvoke(state, config))
+    result = state
+    async for snapshot in graph.astream(state, config, stream_mode="values"):
+        result = InvestigationState(**snapshot)
+        await on_update(result)
+    return result
 
 
 def to_record(state: InvestigationState) -> InvestigationRecord:
@@ -68,7 +77,10 @@ def to_record(state: InvestigationState) -> InvestigationRecord:
 
 
 def save_record(state: InvestigationState, directory: Path) -> Path:
-    record = to_record(state)
+    return write_record(to_record(state), directory)
+
+
+def write_record(record: InvestigationRecord, directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{record.investigation_id}.json"
     path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
