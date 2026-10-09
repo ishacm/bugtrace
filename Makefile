@@ -1,4 +1,4 @@
-.PHONY: setup doctor dev seed test lint format
+.PHONY: setup doctor dev seed workspace test lint format
 
 setup:
 	uv sync
@@ -11,6 +11,9 @@ dev:
 
 seed:
 	uv run python scripts/seed_cases.py
+
+workspace:
+	uv run python scripts/prepare_workspace.py $(CASE)
 
 test:
 	uv run pytest

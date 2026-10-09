@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     seed_limit: int = Field(default=10, ge=1, le=500)
     cases_path: Path = Path("data/cases.jsonl")
 
+    workspaces_dir: Path = Path("var/workspaces")
+    git_timeout_seconds: float = Field(default=600, gt=0)
+
     model_name: str | None = None
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
 
