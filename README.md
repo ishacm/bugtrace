@@ -252,4 +252,4 @@ Python · FastAPI · LangGraph · MCP · Pydantic · Gemini / Vertex AI · SQLit
 
 ## License
 
-No license has been selected yet.
+MIT
