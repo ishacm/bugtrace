@@ -1,0 +1,85 @@
+"""Server-side rendering of investigation views.
+
+The page and the SSE stream render through the same Jinja partials, so a live
+update and a browser refresh produce identical markup from persisted state.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from fastapi.templating import Jinja2Templates
+
+from app.agent.models import AgentEvent
+from app.api.investigations import InvestigationResponse
+from app.storage.models import TERMINAL_STATUSES, InvestigationStatus, StoredInvestigation
+
+S = InvestigationStatus
+
+templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
+
+# Panels replaced as a unit on every state update; names match `data-panel` in the page.
+PANELS = ("status", "suspects", "evidence", "hypothesis", "report")
+
+VerdictKind = Literal["running", "completed", "partial", "unresolved", "failed", "cancelled"]
+
+
+@dataclass(frozen=True)
+class Verdict:
+    kind: VerdictKind
+    title: str
+    detail: str
+
+
+def verdict(inv: InvestigationResponse) -> Verdict:
+    """Plain-language outcome derived only from persisted status, report and error."""
+    status, report = inv.status, inv.report
+    if status in (S.CREATED, S.PREPARING):
+        return Verdict("running", "PREPARING WORKSPACE", f"Checking out {inv.case.repo}.")
+    if status not in TERMINAL_STATUSES:
+        return Verdict("running", "INVESTIGATION IN PROGRESS", "The agent is gathering evidence.")
+    if status == S.FAILED:
+        return Verdict("failed", "INVESTIGATION FAILED", inv.error or "No error message recorded.")
+    if status == S.CANCELLED:
+        return Verdict(
+            "cancelled",
+            "INVESTIGATION CANCELLED",
+            "Stopped on request. Anything shown below was gathered before cancellation.",
+        )
+    if status == S.RESOLVED:
+        return Verdict("completed", "CASE CLOSED", "The proposed fix passed evaluation.")
+    if report is None:
+        return Verdict("unresolved", "UNRESOLVED", "No root-cause report was produced.")
+    if report.status == "COMPLETED":
+        return Verdict(
+            "completed",
+            "ROOT CAUSE IDENTIFIED",
+            f"Report completed with {report.confidence} confidence. No fix has been proposed "
+            "or evaluated yet, so the case remains UNRESOLVED.",
+        )
+    return Verdict(
+        "partial",
+        "PARTIAL FINDINGS",
+        f"The evidence did not support a complete root cause ({report.confidence} confidence). "
+        "The case remains UNRESOLVED.",
+    )
+
+
+def context(stored: StoredInvestigation) -> dict[str, object]:
+    inv = InvestigationResponse.from_stored(stored)
+    return {
+        "inv": inv,
+        "verdict": verdict(inv),
+        "terminal": inv.status in TERMINAL_STATUSES,
+        "evidence_ids": {e.evidence_id for e in inv.evidence},
+        "last_seq": len(inv.events) - 1,
+    }
+
+
+def render_panels(stored: StoredInvestigation) -> dict[str, str]:
+    ctx = context(stored)
+    return {name: templates.get_template(f"partials/{name}.html").render(ctx) for name in PANELS}
+
+
+def render_event(event: AgentEvent, seq: int) -> str:
+    return templates.get_template("partials/event.html").render(event=event, seq=seq)

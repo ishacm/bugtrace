@@ -1,0 +1,5 @@
+<li class="event event-{{ event.type }}" data-seq="{{ seq }}">
+  <time datetime="{{ event.timestamp.isoformat() }}">{{ event.timestamp.strftime("%H:%M:%S") }}</time>
+  <span class="event-title">{{ event.title }}</span>
+  <span class="event-message">{{ event.message }}</span>
+</li>

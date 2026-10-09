@@ -4,7 +4,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from pathlib import Path
 from typing import Protocol
 
@@ -186,11 +186,6 @@ class InvestigationService:
             self._fail(investigation_id, f"{type(exc).__name__}: {exc}")
 
     def _fail(self, investigation_id: str, message: str) -> None:
-        try:
-            self.store.transition(investigation_id, S.FAILED, error=message)
-        except InvalidTransitionError:
-            return
-        self.store.append_event(
-            investigation_id,
-            AgentEvent(type="error", title="INVESTIGATION FAILED", message=message),
-        )
+        event = AgentEvent(type="error", title="INVESTIGATION FAILED", message=message)
+        with suppress(InvalidTransitionError):
+            self.store.transition(investigation_id, S.FAILED, error=message, event=event)

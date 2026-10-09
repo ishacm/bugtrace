@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}BugTrace{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='bugtrace.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/">BUG<span>TRACE</span></a>
+    <span class="tagline">An AI detective for real software incidents</span>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

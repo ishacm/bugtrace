@@ -4,7 +4,7 @@
 V1
 
 ## Current task
-TASK 007 — Detective UI + live streaming
+TASK 008 — Patch proposal + human approval
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -13,7 +13,7 @@ TASK 007 — Detective UI + live streaming
 - [x] TASK 004 — MCP repository tools
 - [x] TASK 005 — LangGraph investigation agent
 - [x] TASK 006 — API + persistence
-- [ ] TASK 007 — Detective UI + live streaming
+- [x] TASK 007 — Detective UI + live streaming
 - [ ] TASK 008 — Patch proposal + human approval
 - [ ] TASK 009 — SWE-bench evaluation
 - [ ] TASK 010 — Regression evals + CI
@@ -28,6 +28,8 @@ TASK 004: `make test` — 93 passed (all 8 tools against fixture repo, traversal
 TASK 005: `make test` — 111 passed (stub-model graph tests: end-to-end over stdio MCP on fixture repo → COMPLETED report with grounded claims, invented paths/IDs rejected, unsupported claim dropped; iteration bound; tool-call bound; no-new-leads stop; insufficient evidence triggers second search + revised hypothesis; model failures → PARTIAL/LOW; sufficiency rules; explicit suspect scoring; gold data absent from state/prompts/record; agent package has no gold/raw-dataset/workspace/repo_tools imports). `make lint` clean. Follow-up after first live run: added bounded retry/backoff for Gemini 429/5xx and fixed fallback root cause to force PARTIAL/LOW (was reporting COMPLETED/HIGH); `make test` — 114 passed. Live: `make investigate CASE=astropy__astropy-12907` with `gemini-3.8-flash` → COMPLETED, MEDIUM, 11 tool calls, 1 iteration; suspects `_coord_matrix`, `_cstack`, `_separable` in `astropy/modeling/separable.py`; 5 grounded claims, all with evidence IDs; 1 model call still failed with 503 after 4 attempts (fallback used); ~7 min wall time, mostly 503 backoff. Record: `var/investigations/fd62be3f-….json`. Not scored against gold (evaluation is TASK 009).
 
 TASK 006: `make format`, `make lint` clean; `make test` — 151 passed (37 new, stub model + in-process repo tools, no Gemini: start → poll → UNRESOLVED with persisted suspects/evidence/report/timeline; POST returns PREPARING before the run finishes; unknown case 404; malformed/extra-field/traversal instance_id 422; missing id 404; non-UUID id 422; recursive no-gold-keys check on POST/GET; persistence across app restart (identical GET); fresh-store round trip; restart marks interrupted runs FAILED; shutdown marks running runs FAILED; workspace failure → FAILED + error event; legal/illegal transition table; store rejects illegal transition and keeps status; cancel → CANCELLED, second cancel/finished cancel → 409; event appends are not duplicated). Live (uvicorn, real Gemini): `POST /api/investigations` for `astropy__astropy-12907` returned `PREPARING` immediately; polling reached `UNRESOLVED` with report PARTIAL/LOW, 5 evidence records, 0 suspects, because every model call failed (one 503, then 429 quota exhausted) and fallbacks were used; after a server restart `GET` returned the same persisted state. A full live run with suspects and root cause still needs model quota.
+
+TASK 007: `make format`, `make lint` clean; `make test` — 169 passed (18 new, no Gemini: stub persisted investigations render COMPLETED/PARTIAL/UNRESOLVED-without-findings/FAILED/CANCELLED/PREPARING pages with distinct verdicts; empty states say "none identified" instead of inventing suspects/root causes; untrusted text (problem statement, event messages, evidence summaries) is escaped; 404/422 for missing/non-UUID ids; home lists seeded cases + case files and handles no seeded cases; static assets served; SSE replays every persisted event once, in order, with `id` = seq, then `state` + `end`; resume via `Last-Event-ID` (wins over `?after=`) and `?after=`; bad `Last-Event-ID`/`after` → 422; SSE over a live stub-model run equals the persisted timeline exactly and ends on the final state; the stream generator delivers non-terminal states while the run is in progress; a disconnected or cancelled stream leaves the run to finish with a report; a failed run streams its error event before `end`). Live (uvicorn, real seeded cases): home lists the 10 cases; the earlier TASK 006 investigation renders as PARTIAL FINDINGS with empty suspect/hypothesis states; a new `astropy__astropy-12907` run streamed 9 timeline events + 6 state updates and ended `UNRESOLVED` (report PARTIAL/LOW), matching `GET /api/investigations/{id}`. Every model call returned 429 (quota exhausted), so a live run with real suspects and a generated root cause has still not been shown in the UI. The stub-model SSE test covers rendering of a full COMPLETED report.
 
 ## Blockers
 None.
@@ -47,14 +49,19 @@ None.
 - Persistence: SQLite at `BUGTRACE_DATABASE_PATH` (default `var/bugtrace.db`). Tables `investigations` (status, PublicCase, `InvestigationRecord` snapshot minus events, error) and `investigation_events` (append-only, `source` = agent|service). `make investigate` uses the same service/store and also exports the record JSON to `var/investigations/<id>.json`.
 - Runs execute as in-process asyncio tasks (no queue). Runs that were in flight when the server stopped are marked FAILED on shutdown/next startup; they are not resumed.
 - V1 has no patch stage, so a finished investigation ends `UNRESOLVED` (report status COMPLETED/PARTIAL is separate). TASK 008 will route through `AWAITING_APPROVAL`.
-- Endpoints: `POST /api/investigations` (202), `GET /api/investigations/{id}` (includes `allowed_transitions` and full event timeline), `POST /api/investigations/{id}/cancel` (409 on illegal transition). No SSE or list endpoint yet (TASK 007).
+- Endpoints: `POST /api/investigations` (202), `GET /api/investigations/{id}` (includes `allowed_transitions` and full event timeline), `POST /api/investigations/{id}/cancel` (409 on illegal transition). `GET /api/investigations/{id}/events` (SSE) added in TASK 007; no JSON list endpoint (the homepage reads the store directly).
 - Agent snapshots are persisted after every graph node (`run_investigation(on_update=...)` via `astream`); the graph itself is unchanged. Added `repo_ready` event type.
 - Live runs are currently limited by Gemini quota (429) and 503 overload.
 - Model is configured via `BUGTRACE_MODEL_NAME` in `.env` (currently `gemini-3.8-flash`, chosen from the key's model listing as the newest stable non-preview text model). Gemini 503 overload is frequent; retries are bounded (4 attempts, 2/4/8s backoff) and failures degrade to fallbacks.
 - Seeding uses the Hugging Face datasets-server REST API (network required).
+- UI: Jinja2 templates (`app/templates/`), vanilla JS + CSS (`app/static/`), routes in `app/web/` (`/`, `/investigations/{id}`, SSE). The page and the stream render through the same Jinja partials; the SSE `state` message carries server-rendered panel HTML, so the JS has no rendering logic of its own.
+- SSE polls SQLite every `BUGTRACE_STREAM_POLL_SECONDS` (default 0.5s) and is a read-only view: the run is an independent asyncio task, so disconnects don't affect it. Every connection starts with a full state snapshot. Event ids are the persisted event sequence numbers. Keep-alive comment every 15s. One poll loop per connected client.
+- `store.transition(..., event=...)` writes the status change and its lifecycle event in one transaction (used for FAILED), so a stream never reports FAILED before the error event is stored. Cancellation adds no timeline event; the status panel shows it.
+- Starlette's TestClient buffers streaming responses, so tests for incremental delivery and disconnects drive the stream generator directly against a real `InvestigationService`.
+- No authentication or CSRF protection on the UI or API: local single-user tool for V1.
 
 ## Notes
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 007 — Detective UI + live streaming
+TASK 008 — Patch proposal + human approval

@@ -1,0 +1,28 @@
+{% from "partials/macros.html" import evidence_refs %}
+<div class="card">
+  <h2 class="card-title">Hypothesis</h2>
+  {% set h = inv.current_hypothesis %}
+  {% if h %}
+  <p class="eyebrow">Iteration {{ h.iteration }}{% if inv.hypotheses | length > 1 %} · revised {{ inv.hypotheses | length - 1 }}×{% endif %}</p>
+  <p class="hypothesis">{{ h.statement }}</p>
+  {{ evidence_refs(h.evidence_ids, evidence_ids) }}
+  {% if h.contradictions %}
+  <p class="eyebrow">Contradictions</p>
+  <ul>{% for c in h.contradictions %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if inv.hypotheses | length > 1 %}
+  <details>
+    <summary>Earlier hypotheses</summary>
+    <ol>{% for old in inv.hypotheses[:-1] %}<li><span class="muted">Iteration {{ old.iteration }}:</span> {{ old.statement }}</li>{% endfor %}</ol>
+  </details>
+  {% endif %}
+  {% else %}
+  <p class="empty">{{ "No hypothesis was formed." if terminal else "No hypothesis yet." }}</p>
+  {% endif %}
+  {% if inv.plan %}
+  <details>
+    <summary>Investigation plan</summary>
+    <ol>{% for step in inv.plan.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+  </details>
+  {% endif %}
+</div>

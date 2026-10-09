@@ -1,0 +1,22 @@
+<div class="verdict verdict-{{ verdict.kind }}">
+  <div class="verdict-main">
+    <span class="badge badge-{{ inv.status | lower }}">{{ inv.status }}</span>
+    <strong class="verdict-title">{{ verdict.title }}</strong>
+    <span class="verdict-detail">{{ verdict.detail }}</span>
+  </div>
+  <dl class="metrics">
+    <div><dt>Iteration</dt><dd>{{ inv.iteration }}</dd></div>
+    <div><dt>Tool calls</dt><dd>{{ inv.tool_call_count }}</dd></div>
+    <div><dt>Evidence</dt><dd>{{ inv.evidence | length }}</dd></div>
+    <div><dt>Suspects</dt><dd>{{ inv.suspects | length }}</dd></div>
+  </dl>
+  {% if "CANCELLED" in inv.allowed_transitions %}
+  <button type="button" class="btn btn-quiet" data-cancel>Cancel investigation</button>
+  {% endif %}
+</div>
+{% if inv.limits_reached or inv.agent_errors %}
+<ul class="notes">
+  {% for limit in inv.limits_reached %}<li><strong>Limit reached:</strong> {{ limit }}</li>{% endfor %}
+  {% for err in inv.agent_errors %}<li><strong>Agent error:</strong> {{ err }}</li>{% endfor %}
+</ul>
+{% endif %}

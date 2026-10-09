@@ -72,3 +72,11 @@ class StoredInvestigation(BaseModel):
     error: str | None = None
     events: list[AgentEvent] = Field(default_factory=list)
     record: InvestigationRecord | None = None
+
+
+class InvestigationSummary(BaseModel):
+    investigation_id: str
+    instance_id: str
+    status: InvestigationStatus
+    created_at: datetime
+    updated_at: datetime

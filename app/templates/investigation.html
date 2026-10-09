@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ inv.case.instance_id }} · BugTrace{% endblock %}
+{% block head %}
+{% if not terminal %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}
+{% endblock %}
+{% block content %}
+<div class="investigation"
+     data-investigation="{{ inv.investigation_id }}"
+     data-last-seq="{{ last_seq }}"
+     data-terminal="{{ 'true' if terminal else 'false' }}">
+
+  <section class="case-header card">
+    <div class="case-header-top">
+      <div>
+        <p class="eyebrow">CASE FILE</p>
+        <h1 class="mono">{{ inv.case.instance_id }}</h1>
+        <p class="muted">
+          {{ inv.case.repo }} · base <span class="mono">{{ inv.case.base_commit[:12] }}</span>
+          · opened {{ inv.created_at.strftime("%Y-%m-%d %H:%M UTC") }}
+          {% if inv.case.issue_url and inv.case.issue_url.startswith("https://") %}· <a href="{{ inv.case.issue_url }}" rel="noopener noreferrer">issue</a>{% endif %}
+        </p>
+      </div>
+      <p class="stream-state" id="stream-state" aria-live="polite">
+        {{ "Final state" if terminal else "Connecting…" }}
+      </p>
+    </div>
+    <details class="statement">
+      <summary>Problem statement</summary>
+      <pre>{{ inv.case.problem_statement }}</pre>
+    </details>
+  </section>
+
+  <section data-panel="status" aria-live="polite">{% include "partials/status.html" %}</section>
+
+  <div class="board">
+    <section class="card timeline-card">
+      <h2 class="card-title">Timeline</h2>
+      <ol class="timeline" id="timeline">
+        {% for item in timeline %}{{ item | safe }}{% endfor %}
+      </ol>
+      <p class="empty" id="timeline-empty" {% if timeline %}hidden{% endif %}>No events recorded yet.</p>
+    </section>
+
+    <div class="board-main">
+      <section data-panel="report">{% include "partials/report.html" %}</section>
+      <section data-panel="hypothesis">{% include "partials/hypothesis.html" %}</section>
+      <section data-panel="suspects">{% include "partials/suspects.html" %}</section>
+      <section data-panel="evidence">{% include "partials/evidence.html" %}</section>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='investigation.js') }}" defer></script>
+{% endblock %}

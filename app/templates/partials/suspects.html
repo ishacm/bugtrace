@@ -1,0 +1,24 @@
+{% from "partials/macros.html" import evidence_refs %}
+<div class="card">
+  <h2 class="card-title">Suspects</h2>
+  {% if inv.suspects %}
+  <ol class="suspects">
+    {% for s in inv.suspects | sort(attribute="rank") %}
+    <li class="suspect{% if s.rank == 1 %} suspect-primary{% endif %}">
+      <div class="suspect-head">
+        <span class="rank">#{{ s.rank }}</span>
+        {% if s.rank == 1 %}<span class="label">PRIMARY SUSPECT</span>{% endif %}
+        <span class="mono">{{ s.path }}{% if s.symbol %}::{{ s.symbol }}{% endif %}</span>
+        <span class="score" title="Distinct supporting evidence plus code-evidence bonus">score {{ s.score }}</span>
+      </div>
+      <p>{{ s.reason }}</p>
+      {{ evidence_refs(s.evidence_ids, evidence_ids) }}
+    </li>
+    {% endfor %}
+  </ol>
+  {% elif terminal %}
+  <p class="empty">No suspects were identified.</p>
+  {% else %}
+  <p class="empty">No suspects yet.</p>
+  {% endif %}
+</div>

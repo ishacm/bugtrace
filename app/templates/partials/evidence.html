@@ -1,0 +1,23 @@
+<div class="card">
+  <h2 class="card-title">Evidence</h2>
+  {% if inv.evidence %}
+  <ul class="evidence">
+    {% for e in inv.evidence %}
+    <li id="{{ e.evidence_id }}" class="evidence-item">
+      <details>
+        <summary>
+          <span class="tag tag-{{ e.type }}">{{ e.type }}</span>
+          <span class="mono ev-id">{{ e.evidence_id }}</span>
+          {% if e.path %}<span class="mono">{{ e.path }}{% if e.start_line %}:{{ e.start_line }}{% if e.end_line and e.end_line != e.start_line %}-{{ e.end_line }}{% endif %}{% endif %}</span>{% endif %}
+          <span class="ev-summary">{{ e.summary }}</span>
+        </summary>
+        <p class="muted">Source: <span class="mono">{{ e.source }}</span>{% if e.relevance %} · {{ e.relevance }}{% endif %}</p>
+        <pre class="excerpt">{{ e.excerpt }}</pre>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">{{ "No evidence was collected." if terminal else "No evidence yet." }}</p>
+  {% endif %}
+</div>

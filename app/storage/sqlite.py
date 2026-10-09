@@ -18,6 +18,7 @@ from app.agent.runner import InvestigationRecord
 from app.data.models import PublicCase
 from app.storage.models import (
     InvestigationStatus,
+    InvestigationSummary,
     StoredInvestigation,
     check_transition,
 )
@@ -91,8 +92,12 @@ class InvestigationStore:
         target: InvestigationStatus,
         *,
         error: str | None = None,
+        event: AgentEvent | None = None,
     ) -> StoredInvestigation:
-        """Move to `target`, raising InvalidTransitionError for illegal edges."""
+        """Move to `target`, raising InvalidTransitionError for illegal edges.
+
+        `event` is appended in the same transaction, so readers never see the new
+        status without the lifecycle event that explains it."""
         with self._connect() as conn:
             current = InvestigationStatus(self._row(conn, investigation_id)["status"])
             check_transition(current, target)
@@ -101,6 +106,8 @@ class InvestigationStore:
                 " updated_at = ? WHERE investigation_id = ?",
                 (target.value, error, _now(), investigation_id),
             )
+            if event is not None:
+                self._insert_events(conn, investigation_id, [event], source="service")
         return self.get(investigation_id)
 
     def save_record(self, record: InvestigationRecord) -> None:
@@ -151,6 +158,24 @@ class InvestigationStore:
         with self._connect() as conn:
             self._row(conn, investigation_id)
             return self._events(conn, investigation_id)
+
+    def list_recent(self, limit: int = 20) -> list[InvestigationSummary]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT investigation_id, instance_id, status, created_at, updated_at"
+                " FROM investigations ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            InvestigationSummary(
+                investigation_id=r["investigation_id"],
+                instance_id=r["instance_id"],
+                status=InvestigationStatus(r["status"]),
+                created_at=datetime.fromisoformat(r["created_at"]),
+                updated_at=datetime.fromisoformat(r["updated_at"]),
+            )
+            for r in rows
+        ]
 
     def ids_with_status(self, statuses: frozenset[InvestigationStatus]) -> list[str]:
         marks = ",".join("?" * len(statuses))

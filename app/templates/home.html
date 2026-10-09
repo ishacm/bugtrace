@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="intro">
+  <h1>Open a case</h1>
+  <p>Each case is a real SWE-bench Verified issue. BugTrace checks out the repository
+    at the commit before the human fix and investigates it with read-only tools.</p>
+</section>
+
+{% if investigations %}
+<section class="card">
+  <h2 class="card-title">Case files</h2>
+  <table class="files">
+    <thead><tr><th>Case</th><th>Status</th><th>Opened</th><th></th></tr></thead>
+    <tbody>
+    {% for item in investigations %}
+      <tr>
+        <td class="mono">{{ item.instance_id }}</td>
+        <td><span class="badge badge-{{ item.status | lower }}">{{ item.status }}</span></td>
+        <td class="muted">{{ item.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+        <td><a href="/investigations/{{ item.investigation_id }}">View</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="cases">
+  {% for case in cases %}
+  <article class="case-card">
+    <header>
+      <span class="mono case-id">{{ case.instance_id }}</span>
+      <span class="repo">{{ case.repo }}</span>
+    </header>
+    <p class="statement-preview">{{ case.problem_statement | truncate(320) }}</p>
+    <footer>
+      <span class="muted mono">base {{ case.base_commit[:12] }}</span>
+      <button type="button" class="btn" data-open-case="{{ case.instance_id }}">Open case</button>
+    </footer>
+  </article>
+  {% else %}
+  <p class="empty">No cases are seeded. Run <code>make seed</code> to load SWE-bench Verified cases.</p>
+  {% endfor %}
+</section>
+<p class="error-line" id="open-error" hidden></p>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', path='home.js') }}" defer></script>
+{% endblock %}
