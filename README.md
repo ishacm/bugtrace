@@ -15,6 +15,7 @@
   <img src="https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white" />
   <img src="https://img.shields.io/badge/GitHub%20Actions-CI-2088FF?logo=githubactions&logoColor=white" />
 </p>
+
 **Evidence-grounded investigation of real software bugs.**
 
 BugTrace starts from a real, historical software issue and inspects the affected repository
@@ -25,22 +26,7 @@ with SWE-bench.
 BugTrace is a benchmark and AI systems engineering project. It is not an autonomous
 production bug fixer.
 
-Python · FastAPI · LangGraph · MCP · Pydantic · Gemini / Vertex AI · SWE-bench · pytest
 
-<br>
-
-## Demo
-
-<!--
-  Demo assets are not captured yet. When they exist, add:
-    docs/assets/bugtrace-demo.gif   homepage → choose bug → timeline → evidence → root cause
-    docs/assets/home.png
-    docs/assets/investigation.png
-  and replace this comment with:
-    ![BugTrace demo](docs/assets/bugtrace-demo.gif)
--->
-
-*Screenshots and demo GIF coming soon.*
 
 <br>
 
