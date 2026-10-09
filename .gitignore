@@ -2,6 +2,12 @@
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.json.key
+*credentials*.json
+service-account*.json
+application_default_credentials.json
 
 # Virtual environments
 .venv/

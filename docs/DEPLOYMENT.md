@@ -92,8 +92,7 @@ data is still lost on redeploy or instance replacement. Runs in flight at shutdo
 marked FAILED (SIGTERM → graceful shutdown in 8 s, inside Cloud Run's 10 s).
 
 Durable production persistence needs a managed database (PostgreSQL on Cloud SQL) for
-the store and a LangGraph Postgres checkpointer. That is future work (TASK 012 or
-later). Mounting SQLite on a Cloud Storage FUSE volume is not a safe substitute: it does
+the store and a LangGraph Postgres checkpointer. That is not implemented. Mounting SQLite on a Cloud Storage FUSE volume is not a safe substitute: it does
 not provide the file locking SQLite needs.
 
 ## Evaluation stays off the web service
@@ -194,17 +193,8 @@ with the image's environment and the vertex backend. Results: `/api/health` 200,
 No deployment to GCP has been made from this repository yet, and no live Vertex AI call
 has been made.
 
-## Optional V3 extension — incident memory
-Store embeddings and summaries of prior solved investigations, excluding evaluation leakage. Retrieve similar incidents only as clues; the agent must still inspect the active repository.
-
-## Optional V3 extension — n8n
-Use n8n only as an event/business workflow layer:
-
-```text
-GitHub event -> n8n -> BugTrace API -> result notification
-```
-
-Do not move core reasoning into n8n.
-
-## Optional V3 extension — multimodal
-Use a small SWE-bench Multimodal sample if time remains. Treat screenshot observations as structured evidence and then continue normal repository investigation.
+## Optional V3 extensions (not implemented)
+The product scope lists three optional extensions: pgvector incident memory, an n8n
+GitHub-trigger workflow, and a multimodal issue path. None of them is implemented. If
+incident memory is added, the memory set must exclude every evaluation case's gold
+solution (see `docs/DATA.md`).

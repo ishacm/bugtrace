@@ -21,7 +21,10 @@ As an engineer, I can select a real bug case and watch BugTrace investigate it s
 10. V2: propose patch.
 11. V2: pause for explicit approval.
 12. V2: apply patch and evaluate.
-13. Show `CASE CLOSED` or `INVESTIGATION REOPENED`.
+13. Show `CASE CLOSED` (harness resolved) or the unresolved outcome.
+
+As built: automatic reopening after a failed evaluation is not implemented. A failed
+evaluation ends the case UNRESOLVED (see `docs/AGENT.md`).
 
 ## Versions
 ### V1 — Investigator

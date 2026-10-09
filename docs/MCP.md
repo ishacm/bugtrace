@@ -47,11 +47,17 @@ Input:
 Return likely tests based on repository structure and naming.
 
 ## V2 privileged execution tools
-Add separately:
-- `apply_patch`
-- `run_evaluation`
+As implemented, a separate stdio server (`app/mcp_servers/patch_server.py`) exposes one
+tool, `apply_patch()`, which takes no diff. It applies the patch stored with the
+investigation only if the status is PATCHING, an `approve` decision is recorded, and the
+patch sha256 matches the approved one. The service starts this server only after an
+approve decision.
 
-These tools must verify the investigation is approved before doing anything.
+The read-only server also has `check_patch` (`git apply --check`, never writes).
+
+Evaluation is not an MCP tool. It runs in the service, outside the agent's tool surface,
+so no MCP server can reach reference (gold) data. `build_request` re-checks the approval
+and sha256 before the harness starts.
 
 ## Security rules
 - No `shell=True`.

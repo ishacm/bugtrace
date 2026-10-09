@@ -1,10 +1,10 @@
 # BugTrace Progress
 
 ## Current version
-V1
+V1 + V2 complete; V3 deployment path implemented (not deployed)
 
 ## Current task
-TASK 012 — Polish + optional V3 extension
+None. All 12 tasks complete.
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -18,7 +18,7 @@ TASK 012 — Polish + optional V3 extension
 - [x] TASK 009 — SWE-bench evaluation
 - [x] TASK 010 — Regression evals + CI
 - [x] TASK 011 — Vertex AI + Cloud Run
-- [ ] TASK 012 — Polish + optional V3 extension
+- [x] TASK 012 — Polish + optional V3 extension (optional extension not taken)
 
 ## Tests
 TASK 001: `make test` — 2 passed (health endpoint, config in test mode). `make lint` (ruff check + format check) clean. `make doctor` passes (warnings: `.env` missing, Docker not installed). `make dev` serves `GET /api/health` → `{"status":"ok"}`.
@@ -94,12 +94,21 @@ Docker is not installed, so **the image build was not run**. Validated instead:
 
 `gcloud` is not installed. **Nothing has been deployed to GCP, and no live Vertex AI call has been made.**
 
+TASK 012: `make format`, `make lint` clean; `make test` — 331 passed, 2 skipped (1 new: `.gitignore` keeps `.env*`, credential/key files, `var/` DBs, workspaces, evaluation reference/run artifacts, regression reports and rendered deploy config out of git, while `.env.example`, `data/cases.jsonl` and the stub baseline stay tracked). `make regression` — 31 passed, wrote `var/evals/regression.json`.
+- README rewritten for reviewers: problem, status table (implemented / locally validated / environment-limited / not deployed), Mermaid architecture, LangGraph graph and status-machine diagrams, MCP tools, grounding, approval gate, patch validation, evaluation boundary, regression/CI, exact setup and run commands, Gemini/Vertex/Cloud Run config, security summary, limitations. Screenshot marked as a placeholder. No benchmark numbers claimed.
+- `docs/PORTFOLIO.md`: summary and 3 CV bullets (implemented behaviour only).
+- Docs aligned with the code: ARCHITECTURE (as-built lifecycle and modules), AGENT (as-built V2 graph; no `revise_patch`, no `test_result`), MCP (patch server; evaluation is not an MCP tool), API (cancel, ready, SSE replay; `case_reopened` reserved), PRODUCT (reopen not implemented), DEPLOYMENT (optional extensions marked not implemented).
+- UI copy: home intro mentions evidence and the approval gate; the approval note no longer promises container grading when evaluation is disabled or Docker is missing.
+- Removed the obsolete `CLAUDE_PROMPTS.md` bootstrap prompt pack (and its `.dockerignore` entry). `.gitignore` now also ignores `*.pem`, `*.key`, credential and service-account JSON files.
+- Dead-code scan (vulture, not added as a dependency): only Pydantic fields, FastAPI routes and two test-used helpers flagged; nothing removed.
+- Final security review: no secrets in tracked files or history; `.env`, `var/`, `*.db` and logs were never committed; no `shell=True`; all 3 subprocess sites use argument lists, explicit cwd and timeouts; tracked case/eval files contain no gold keys; the patch server still requires PATCHING + recorded approve + sha256 match and writes the diff outside the repo tree; largest tracked file is `uv.lock` (152 KB).
+- Optional V3 extension: not implemented (task brief excluded new features). No failure/reopen run was observed beyond the documented quota-limited PARTIAL/LOW runs.
+
 ## Blockers
 None. Real SWE-bench grading needs Docker, which is not installed here.
 
 ## Known limitations
 - Docker not installed locally; doctor reports a WARNING (needed only for V2 evaluation).
-- No LangGraph, MCP or model code yet (by design).
 - Seed takes the first N rows of the split; the default 10 are all `astropy/astropy`.
 - SWE-bench rows have no `issue_url`; field is `null` unless a source provides it.
 - `hints_text` is excluded from `PublicCase` (issue comments may hint at the fix).
@@ -169,4 +178,4 @@ None. Real SWE-bench grading needs Docker, which is not installed here.
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 012 — Polish + optional V3 extension
+None. Still to validate with resources not available here: a real SWE-bench harness run (Docker), a live end-to-end patch proposal (Gemini quota), the image build, a Cloud Run/Vertex deployment and the first GitHub Actions run (needs a remote).

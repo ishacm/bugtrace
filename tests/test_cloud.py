@@ -6,6 +6,8 @@ never called against the real service here."""
 import json
 import logging
 import re
+import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -431,6 +433,46 @@ def test_dockerignore_excludes_secrets_and_local_state() -> None:
     entries = set((ROOT / ".dockerignore").read_text(encoding="utf-8").split())
     assert {".env", ".env.*", ".git", ".venv", "var", "tests", "*.db"} <= entries
     assert "data" not in entries  # the seeded public cases ship in the image
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_gitignore_keeps_secrets_state_and_evaluation_artifacts_out_of_git() -> None:
+    must_ignore = [
+        ".env",
+        ".env.local",
+        "service-account.json",
+        "gcp-credentials.json",
+        "application_default_credentials.json",
+        "deploy/key.pem",
+        "var/bugtrace.db",
+        "var/checkpoints.db",
+        "var/workspaces/1/repo/setup.py",
+        "var/evaluations/reference/astropy__astropy-12907.json",
+        "var/evaluations/runs/1/2/predictions.jsonl",
+        "var/evals/regression.json",
+        "var/deploy/service.yaml",
+        "logs/run_evaluation/x.log",
+    ]
+    result = subprocess.run(  # noqa: S603
+        ["git", "check-ignore", "--no-index", "--stdin"],  # noqa: S607
+        cwd=ROOT,
+        input="\n".join(must_ignore),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert sorted(result.stdout.split()) == sorted(must_ignore)
+    for kept in (".env.example", "data/cases.jsonl", "evals/baselines/stub.json"):
+        assert (
+            subprocess.run(  # noqa: S603
+                ["git", "check-ignore", "--no-index", "-q", kept],  # noqa: S607
+                cwd=ROOT,
+                timeout=30,
+                check=False,
+            ).returncode
+            == 1
+        ), kept
 
 
 # --- Cloud Run service config ---------------------------------------------------------

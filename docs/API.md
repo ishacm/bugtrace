@@ -29,8 +29,15 @@ Request:
 or `reject`.
 Return `409` unless status is `AWAITING_APPROVAL` with a proposed patch and no prior decision. `approve` moves to `PATCHING` and resumes the paused graph; `reject` moves to `UNRESOLVED` and leaves the workspace unchanged.
 
+### `POST /api/investigations/{id}/cancel`
+Cancels a running investigation. `409` if it is already finished.
+
+### `GET /api/ready`
+Readiness probe: storage, seeded cases and model configuration. `503` if a check fails.
+
 ### `GET /api/investigations/{id}/events`
-Server-Sent Events stream.
+Server-Sent Events stream. Replays persisted events (`id` = sequence number, resumable
+with `Last-Event-ID`), then sends `state` updates and `end`.
 
 ## Event types
 - `case_started`
@@ -51,7 +58,8 @@ Server-Sent Events stream.
 - `evaluation_started`
 - `evaluation_completed`
 - `case_closed`
-- `case_reopened`
+- `evaluation_finished` (graded, not resolved)
+- `case_reopened` (reserved; not emitted)
 - `error`
 
 Every event includes timestamp, type, title, message, and optional metadata.
@@ -72,6 +80,7 @@ Show:
 - root cause
 - V2 proposed diff and approval buttons
 - V2 evaluation result
-- V2 replay control
+- V2 replay: every SSE connection replays the persisted timeline, so reopening the page
+  replays the investigation. There is no separate replay control.
 
 Never show SWE-bench gold data.

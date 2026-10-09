@@ -20,7 +20,6 @@ Include at least:
 - root cause
 - V2 proposed patch
 - V2 approval status
-- V2 test result
 - errors
 - final report
 
@@ -71,18 +70,22 @@ High confidence requires code evidence plus at least one test/runtime/git source
 Use LOW/MEDIUM/HIGH rather than fake decimal certainty.
 
 ## V2 graph extension
+As implemented (`app/agent/graph.py`):
 
 ```text
-root_cause
-  -> propose_patch
-  -> pause_for_approval
-       -> reject: finalize
-       -> approve: apply_patch
-  -> evaluate_patch
-       -> pass: RESOLVED
-       -> fail and attempts remain: revise_patch
-       -> fail: UNRESOLVED
+finalize
+  -> report not COMPLETED: END (UNRESOLVED)
+  -> propose_patch (up to `agent_max_patch_attempts`, with validator feedback)
+       -> no valid patch: END (UNRESOLVED, patch_error)
+  -> pause_for_approval (LangGraph interrupt, checkpointed in SQLite)
+       -> reject: END
+       -> approve: apply_patch -> END
 ```
+
+Evaluation is deliberately not a graph node. After `apply_patch`, the service hands the
+approved diff to the evaluator, so harness results and reference data never enter graph
+state, checkpoints or prompts. A `revise_patch` loop after a failed evaluation is not
+implemented: feeding test outcomes back to the agent would need its own leakage review.
 
 ## Prompt behavior
 The system prompt must require:

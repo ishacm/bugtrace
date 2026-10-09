@@ -35,6 +35,5 @@ deploy
 Dockerfile
 .dockerignore
 CLAUDE.md
-CLAUDE_PROMPTS.md
 PROGRESS.md
 Makefile

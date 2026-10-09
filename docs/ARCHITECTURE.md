@@ -13,11 +13,13 @@ LangGraph Investigation
   |
   +--> MCP Repo Server --> isolated Git workspace
   |
-  +--> ModelClient --> Gemini API (local) / Vertex AI (V3)
+  +--> ModelClient --> Gemini API (local) / Vertex AI (Cloud Run)
   |
   +--> SQLite persistence (V1/V2)
   |
-  +--> V2 privileged execution --> approved patch --> SWE-bench evaluator
+  +--> MCP Patch Server (approved patch only)
+  |
+  +--> Evaluator (service-side, outside the agent) --> SWE-bench harness in Docker
 ```
 
 ## Design principles
@@ -32,24 +34,28 @@ LangGraph Investigation
 ## Core modules
 - `app/data/`: SWE-bench adapter and safe models.
 - `app/workspace/`: per-investigation Git repositories.
-- `app/mcp_servers/`: repository and V2 execution tools.
+- `app/mcp_servers/`: read-only repository server and the privileged patch server.
+- `app/services/`: investigation lifecycle, approval decisions, evaluation hand-off.
+- `app/web/`: server-rendered pages and the SSE stream.
 - `app/agent/`: state, nodes, prompts and graph.
-- `app/api/`: REST + event streaming.
+- `app/api/`: REST endpoints.
 - `app/storage/`: persistence.
 - `app/evaluation/`: gold metadata and evaluator integration.
 - `app/templates/`, `app/static/`: lightweight UI.
 
 ## Status lifecycle
+As implemented in `app/storage/models.py` (`TRANSITIONS`); the store rejects any other edge.
 
 ```text
-CREATED
-  -> PREPARING
-  -> INVESTIGATING
-  -> AWAITING_APPROVAL (V2)
-  -> PATCHING (V2)
-  -> EVALUATING (V2)
-  -> RESOLVED | UNRESOLVED | FAILED
+CREATED -> PREPARING -> INVESTIGATING
+INVESTIGATING     -> AWAITING_APPROVAL (COMPLETED report + valid patch) | UNRESOLVED
+AWAITING_APPROVAL -> PATCHING (approve) | UNRESOLVED (reject)
+PATCHING          -> EVALUATING (applied) | UNRESOLVED (apply refused/failed)
+EVALUATING        -> RESOLVED (harness resolved: true) | UNRESOLVED
+any non-terminal  -> FAILED | CANCELLED   (AWAITING_APPROVAL cannot fail; it is idle)
 ```
+
+`EVALUATING -> AWAITING_APPROVAL` (reopen) is a legal edge but no code path uses it yet.
 
 ## Constraints
 - Maximum investigation iterations: 4 by default.
