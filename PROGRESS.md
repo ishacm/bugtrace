@@ -4,7 +4,7 @@
 V1
 
 ## Current task
-TASK 008 — Patch proposal + human approval
+TASK 009 — SWE-bench evaluation
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -14,7 +14,7 @@ TASK 008 — Patch proposal + human approval
 - [x] TASK 005 — LangGraph investigation agent
 - [x] TASK 006 — API + persistence
 - [x] TASK 007 — Detective UI + live streaming
-- [ ] TASK 008 — Patch proposal + human approval
+- [x] TASK 008 — Patch proposal + human approval
 - [ ] TASK 009 — SWE-bench evaluation
 - [ ] TASK 010 — Regression evals + CI
 - [ ] TASK 011 — Vertex AI + Cloud Run
@@ -30,6 +30,8 @@ TASK 005: `make test` — 111 passed (stub-model graph tests: end-to-end over st
 TASK 006: `make format`, `make lint` clean; `make test` — 151 passed (37 new, stub model + in-process repo tools, no Gemini: start → poll → UNRESOLVED with persisted suspects/evidence/report/timeline; POST returns PREPARING before the run finishes; unknown case 404; malformed/extra-field/traversal instance_id 422; missing id 404; non-UUID id 422; recursive no-gold-keys check on POST/GET; persistence across app restart (identical GET); fresh-store round trip; restart marks interrupted runs FAILED; shutdown marks running runs FAILED; workspace failure → FAILED + error event; legal/illegal transition table; store rejects illegal transition and keeps status; cancel → CANCELLED, second cancel/finished cancel → 409; event appends are not duplicated). Live (uvicorn, real Gemini): `POST /api/investigations` for `astropy__astropy-12907` returned `PREPARING` immediately; polling reached `UNRESOLVED` with report PARTIAL/LOW, 5 evidence records, 0 suspects, because every model call failed (one 503, then 429 quota exhausted) and fallbacks were used; after a server restart `GET` returned the same persisted state. A full live run with suspects and root cause still needs model quota.
 
 TASK 007: `make format`, `make lint` clean; `make test` — 169 passed (18 new, no Gemini: stub persisted investigations render COMPLETED/PARTIAL/UNRESOLVED-without-findings/FAILED/CANCELLED/PREPARING pages with distinct verdicts; empty states say "none identified" instead of inventing suspects/root causes; untrusted text (problem statement, event messages, evidence summaries) is escaped; 404/422 for missing/non-UUID ids; home lists seeded cases + case files and handles no seeded cases; static assets served; SSE replays every persisted event once, in order, with `id` = seq, then `state` + `end`; resume via `Last-Event-ID` (wins over `?after=`) and `?after=`; bad `Last-Event-ID`/`after` → 422; SSE over a live stub-model run equals the persisted timeline exactly and ends on the final state; the stream generator delivers non-terminal states while the run is in progress; a disconnected or cancelled stream leaves the run to finish with a report; a failed run streams its error event before `end`). Live (uvicorn, real seeded cases): home lists the 10 cases; the earlier TASK 006 investigation renders as PARTIAL FINDINGS with empty suspect/hypothesis states; a new `astropy__astropy-12907` run streamed 9 timeline events + 6 state updates and ended `UNRESOLVED` (report PARTIAL/LOW), matching `GET /api/investigations/{id}`. Every model call returned 429 (quota exhausted), so a live run with real suspects and a generated root cause has still not been shown in the UI. The stub-model SSE test covers rendering of a full COMPLETED report.
+
+TASK 008: `make format`, `make lint` clean; `make test` — 207 passed (38 new in `tests/test_patches.py`, stub model, no Gemini). Coverage: diff validator accepts a valid diff, normalizes blank context lines, and rejects 17 malformed or unsafe diffs (empty, garbage, no hunks, wrong counts in either direction, bad hunk header, `..`/absolute paths, `.git`/`.env`, create/delete, rename, mode/binary headers, duplicate file, no-op hunk). Read-only `check_patch` never mutates and rejects stale context, missing files, traversal and symlink escapes. A COMPLETED report gives a grounded `ProposedPatch` (invented evidence ID dropped) and status AWAITING_APPROVAL with the workspace untouched. Invalid, non-applying or ungrounded diffs are retried with feedback up to `agent_max_patch_attempts`, then end UNRESOLVED with `patch_error`. A PARTIAL report proposes nothing. Reject → UNRESOLVED with the workspace byte-identical and HEAD unchanged. Approve → PATCHING → patch applied only in the workspace (one file modified, HEAD unchanged, BugTrace `git status` unchanged) → UNRESOLVED. Decisions get 409 in PREPARING/CANCELLED/finished-without-patch states and on a second decision; 404/422 for bad ids or bodies. AWAITING_APPROVAL and the patch survive an app restart, and approval then resumes the graph from the SQLite checkpoint. Direct `apply_patch` is refused before approval, when PATCHING has no recorded approval, and when the stored patch changed after approval; the stdio patch server exposes only `apply_patch` and refuses before approval. No `GOLD` text in any prompt (including patch prompts), API response or page. Checkpoint state round-trips with no unregistered-type warnings. Pages show the diff, the Approve/Reject controls only while AWAITING_APPROVAL, and rejected/applied/no-valid-patch outcomes. Live (uvicorn, `astropy__astropy-12907`): every Gemini call returned 429, so the report was PARTIAL/LOW and correctly no patch was proposed; a live `decision` on it returned 409 and the workspace was clean. A live end-to-end patch proposal has not been run yet (needs model quota).
 
 ## Blockers
 None.
@@ -48,7 +50,6 @@ None.
 - Agent: `find_symbol`/search are Python-focused (`**/*.py`); test evidence comes from `search_code` in `**/test*.py`; git evidence is shallow (`git_log` on the base commit only), so HIGH confidence is easier to reach via test evidence than history.
 - Persistence: SQLite at `BUGTRACE_DATABASE_PATH` (default `var/bugtrace.db`). Tables `investigations` (status, PublicCase, `InvestigationRecord` snapshot minus events, error) and `investigation_events` (append-only, `source` = agent|service). `make investigate` uses the same service/store and also exports the record JSON to `var/investigations/<id>.json`.
 - Runs execute as in-process asyncio tasks (no queue). Runs that were in flight when the server stopped are marked FAILED on shutdown/next startup; they are not resumed.
-- V1 has no patch stage, so a finished investigation ends `UNRESOLVED` (report status COMPLETED/PARTIAL is separate). TASK 008 will route through `AWAITING_APPROVAL`.
 - Endpoints: `POST /api/investigations` (202), `GET /api/investigations/{id}` (includes `allowed_transitions` and full event timeline), `POST /api/investigations/{id}/cancel` (409 on illegal transition). `GET /api/investigations/{id}/events` (SSE) added in TASK 007; no JSON list endpoint (the homepage reads the store directly).
 - Agent snapshots are persisted after every graph node (`run_investigation(on_update=...)` via `astream`); the graph itself is unchanged. Added `repo_ready` event type.
 - Live runs are currently limited by Gemini quota (429) and 503 overload.
@@ -59,9 +60,16 @@ None.
 - `store.transition(..., event=...)` writes the status change and its lifecycle event in one transaction (used for FAILED), so a stream never reports FAILED before the error event is stored. Cancellation adds no timeline event; the status panel shows it.
 - Starlette's TestClient buffers streaming responses, so tests for incremental delivery and disconnects drive the stream generator directly against a real `InvestigationService`.
 - No authentication or CSRF protection on the UI or API: local single-user tool for V1.
+- Patch stage (TASK 008). The graph continues after `finalize` only for a COMPLETED report: `propose_patch` → `pause_for_approval` (LangGraph `interrupt`) → `apply_patch` on approve, END on reject. Graph state is checkpointed with `AsyncSqliteSaver` at `BUGTRACE_CHECKPOINT_PATH` (default `var/checkpoints.db`, thread id = investigation id). The serializer allowlists BugTrace's own Pydantic/enum types. CLI/test runs without a checkpointer use an in-memory saver.
+- Patch validation: strict unified-diff parser (`app/agent/patches.py`), then a grounding check (every file must appear in evidence; at least one known evidence ID), then read-only `check_patch` (`git apply --check` with the patch file in a temp dir outside the repo). Only edits to existing files are allowed. Both check and apply use `--whitespace=nowarn --unidiff-zero`; `--unidiff-zero` stops git from forcing hunks without trailing context to match at end of file, while context and removed lines must still match.
+- Privileged execution: separate stdio MCP server `app/mcp_servers/patch_server.py` with a single tool `apply_patch()` that takes no diff. It loads the persisted patch and refuses unless status is PATCHING, an `approve` row exists in `investigation_approvals`, and the patch sha256 matches the approved one. It writes the patch to `var/workspaces/<id>/patches/<sha>.diff`, runs `git apply --check` then `git apply`, and records `git diff`/`--stat`. It never commits or pushes. The service starts it only after an approve decision.
+- Decisions: `POST /api/investigations/{id}/decision` `{"decision": "approve"|"reject"}`. The store records the decision, changes status and adds the lifecycle event in one transaction (approve → PATCHING, reject → UNRESOLVED), then the paused graph is resumed in the background. Added transition PATCHING → UNRESOLVED (applied, not evaluated). TASK 009 should route through EVALUATING instead.
+- New event types: `patch_proposed`, `approval_required`, `patch_approved`, `patch_rejected`, `patch_applied`. A finished investigation with no valid patch ends UNRESOLVED with `patch_error` and a `NO VALID PATCH` event.
+- The UI panel is `proposal`, not `patch`, because `patch` is a SWE-bench gold key name and the no-gold-keys tests treat it as a leak. The button reads "Approve & apply" rather than the task's "Approve & Test" because evaluation arrives in TASK 009.
+- The read-only repo server now has 9 tools (added `check_patch`, which never writes).
 
 ## Notes
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 008 — Patch proposal + human approval
+TASK 009 — SWE-bench evaluation

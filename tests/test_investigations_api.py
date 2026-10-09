@@ -1,7 +1,7 @@
 import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -12,11 +12,13 @@ from fastapi.testclient import TestClient
 from app.agent.model_client import ModelClient
 from app.agent.models import AgentEvent
 from app.agent.runner import to_record
-from app.agent.tools import RepoToolClient
+from app.agent.tools import PatchApplier, RepoToolClient
 from app.config import Settings
 from app.data.models import PUBLIC_CASE_FIELDS, PublicCase
 from app.data.store import write_cases
 from app.main import create_app
+from app.mcp_servers.models import ApplyPatchResult
+from app.mcp_servers.patch_tools import PatchTools
 from app.mcp_servers.repo_tools import RepoTools
 from app.storage.models import (
     TERMINAL_STATUSES,
@@ -34,14 +36,35 @@ GOLD_KEYS = {"patch", "test_patch", "FAIL_TO_PASS", "PASS_TO_PASS", "hints_text"
 INSTANCE_ID = "owner__fixture-1"
 
 
-class FakeBackend:
-    """Fixture-repo workspace + in-process repo tools + stub model (no network, no Gemini)."""
+class LocalPatchClient:
+    """In-process adapter over the privileged PatchTools (same authorization checks)."""
 
-    def __init__(self, workspaces: Path, origin: Path, *, prepare_delay: float = 0) -> None:
+    def __init__(self, tools: PatchTools) -> None:
+        self.tools = tools
+
+    async def apply_patch(self) -> ApplyPatchResult:
+        return self.tools.apply_patch()
+
+
+class FakeBackend:
+    """Fixture-repo workspace + in-process repo/patch tools + stub model (no network, no Gemini)."""
+
+    def __init__(
+        self,
+        workspaces: Path,
+        origin: Path,
+        *,
+        prepare_delay: float = 0,
+        database_path: Path | None = None,
+        model_factory: Callable[[], ModelClient] = _happy_model,
+    ) -> None:
         self.manager = WorkspaceManager(workspaces, git_timeout=60)
         self.origin = origin
         self.prepare_delay = prepare_delay
         self.fail_prepare = False
+        self.database_path = database_path
+        self.model_factory = model_factory
+        self.models: list[ModelClient] = []
 
     async def prepare(self, investigation_id: str, case: PublicCase) -> None:
         await asyncio.sleep(self.prepare_delay)
@@ -50,11 +73,20 @@ class FakeBackend:
         await asyncio.to_thread(self.manager.prepare, investigation_id, case, self.origin.as_uri())
 
     def model(self) -> ModelClient:
-        return _happy_model()
+        model = self.model_factory()
+        self.models.append(model)
+        return model
 
     @asynccontextmanager
     async def repo_client(self, investigation_id: str) -> AsyncIterator[RepoToolClient]:
         yield LocalRepoClient(RepoTools.for_investigation(self.manager, investigation_id))
+
+    @asynccontextmanager
+    async def patch_client(self, investigation_id: str) -> AsyncIterator[PatchApplier]:
+        if self.database_path is None:
+            raise RuntimeError("FakeBackend needs database_path for the patch client")
+        store = InvestigationStore(self.database_path)
+        yield LocalPatchClient(PatchTools.for_investigation(self.manager, store, investigation_id))
 
 
 @pytest.fixture
@@ -73,11 +105,13 @@ def env(tmp_path: Path, fixture_repo: tuple[Path, list[str]]) -> dict[str, Any]:
         cases_path=cases_path,
         database_path=tmp_path / "db" / "bugtrace.db",
         workspaces_dir=tmp_path / "workspaces",
+        checkpoint_path=tmp_path / "db" / "checkpoints.db",
     )
     return {"settings": settings, "origin": origin, "case": case, "tmp": tmp_path}
 
 
 def _backend(env: dict[str, Any], **kwargs: Any) -> FakeBackend:
+    kwargs.setdefault("database_path", env["settings"].database_path)
     return FakeBackend(env["tmp"] / "workspaces", env["origin"], **kwargs)
 
 

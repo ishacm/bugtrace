@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from app.config import get_settings
 from app.mcp_servers.models import (
     DEFAULT_SEARCH_RESULTS,
+    CheckPatchResult,
     FindSymbolResult,
     GitLogResult,
     GitTextResult,
@@ -81,6 +82,11 @@ def build_server(tools: RepoTools) -> MCPServer:
     def list_test_files(path: str = ".", max_results: int = 200) -> ListTestFilesResult:
         """List likely test files under a repository-relative path."""
         return tools.list_test_files(path, max_results)
+
+    @server.tool(annotations=READ_ONLY)
+    def check_patch(diff: str) -> CheckPatchResult:
+        """Validate a unified diff and run `git apply --check`. Never modifies the repository."""
+        return tools.check_patch(diff)
 
     return server
 

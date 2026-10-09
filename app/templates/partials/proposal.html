@@ -1,0 +1,39 @@
+{% from "partials/macros.html" import evidence_refs %}
+{% set p = inv.proposed_patch %}
+{% if p %}
+<div class="card patch">
+  <h2 class="card-title">Proposed patch</h2>
+  <p class="eyebrow">
+    <span class="mono">{{ p.patch_id }}</span> · attempt {{ p.attempt }}
+    · <span class="d-add">+{{ p.added_lines }}</span> <span class="d-del">&minus;{{ p.removed_lines }}</span>
+    · <span class="mono">{{ p.affected_files | join(", ") }}</span>
+  </p>
+  <p class="report-summary">{{ p.summary }}</p>
+  <p>{{ p.rationale }}</p>
+  {{ evidence_refs(p.evidence_ids, evidence_ids) }}
+  <pre class="diff">{% for line in p.diff.splitlines() %}<span class="{% if line.startswith('+++') or line.startswith('---') %}d-file{% elif line.startswith('@@') %}d-hunk{% elif line.startswith('+') %}d-add{% elif line.startswith('-') %}d-del{% endif %}">{{ line }}</span>{% endfor %}</pre>
+  {% if inv.status == "AWAITING_APPROVAL" %}
+  <div class="decision">
+    <p class="muted">Nothing has been applied. Approving applies exactly this diff inside the
+      investigation workspace; it is never committed or pushed.</p>
+    <div class="decision-buttons">
+      <button type="button" class="btn" data-decision="approve">Approve &amp; apply</button>
+      <button type="button" class="btn btn-quiet" data-decision="reject">Reject</button>
+    </div>
+  </div>
+  {% elif inv.approval %}
+  <p class="decision-made">Decision: <strong>{{ inv.approval.decision | upper }}</strong>
+    <span class="muted">{{ inv.approval.decided_at.strftime("%Y-%m-%d %H:%M UTC") }}</span></p>
+  {% endif %}
+  {% if inv.patch_result %}
+  <h3>Result</h3>
+  <p>{{ "Applied" if inv.patch_result.applied else "Not applied" }}: {{ inv.patch_result.message }}</p>
+  {% if inv.patch_result.stat %}<pre class="excerpt">{{ inv.patch_result.stat }}</pre>{% endif %}
+  {% endif %}
+</div>
+{% elif inv.patch_error and terminal %}
+<div class="card patch">
+  <h2 class="card-title">Proposed patch</h2>
+  <p class="empty">No valid patch was proposed: {{ inv.patch_error }}</p>
+</div>
+{% endif %}

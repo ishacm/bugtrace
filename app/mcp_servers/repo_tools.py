@@ -7,10 +7,12 @@ the hardened `run_git`. Nothing here writes to the repository.
 import hashlib
 import json
 import re
+import tempfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from app.agent.patches import InvalidPatchError, ParsedPatch, parse_unified_diff, patch_sha256
 from app.mcp_servers.models import (
     DEFAULT_SEARCH_RESULTS,
     MAX_LIST_ENTRIES,
@@ -18,6 +20,7 @@ from app.mcp_servers.models import (
     MAX_READ_LINES,
     MAX_SEARCH_RESULTS,
     MAX_TEST_FILES,
+    CheckPatchResult,
     CommitSummary,
     DirectoryEntry,
     FileLine,
@@ -49,6 +52,10 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 # Commit-ish: hex sha (abbreviated or full) or HEAD with optional ~N / ^N.
 _REF_RE = re.compile(r"^(?:[0-9a-f]{4,40}|HEAD)(?:[~^][0-9]{0,3})*$")
 _TEST_DIR_NAMES = {"test", "tests", "testing"}
+# Shared by `git apply --check` and the privileged apply so both judge a patch alike.
+# --unidiff-zero: hunks without trailing context are not forced to match at end of
+# file (model-written diffs often omit it); context and removed lines must still match.
+GIT_APPLY_OPTIONS = ("--whitespace=nowarn", "--unidiff-zero")
 
 
 class ToolFailure(Exception):
@@ -364,6 +371,34 @@ class RepoTools:
             )
 
         return self._run("list_test_files", args, ListTestFilesResult, body)
+
+    # -- patch validation (no writes) ----------------------------------------
+
+    def validate_patch(self, diff: str) -> ParsedPatch:
+        """Structural + path checks, then `git apply --check` against the working tree."""
+        try:
+            parsed = parse_unified_diff(diff)
+        except InvalidPatchError as exc:
+            raise ToolFailure(ToolErrorCode.PATCH_REJECTED, str(exc)) from exc
+        for path in parsed.files:
+            resolved, _ = self._resolve(path)  # also rejects symlink escapes
+            if not resolved.is_file() or resolved.is_symlink():
+                raise ToolFailure(ToolErrorCode.NOT_FOUND, f"patch targets missing file {path!r}")
+        # The patch file lives outside the repository; --check reads but never writes.
+        with tempfile.TemporaryDirectory(prefix="bugtrace-check-") as tmp:
+            patch_file = Path(tmp) / "check.diff"
+            patch_file.write_text(parsed.diff, encoding="utf-8")
+            result = self._git("apply", "--check", *GIT_APPLY_OPTIONS, str(patch_file), check=False)
+        if result.returncode != 0:
+            detail = " ".join(result.stderr.strip().splitlines()[-3:]) or "no details"
+            raise ToolFailure(ToolErrorCode.PATCH_REJECTED, f"git apply --check failed: {detail}")
+        return parsed
+
+    def check_patch(self, diff: str) -> CheckPatchResult:
+        def body() -> CheckPatchResult:
+            return CheckPatchResult(files=self.validate_patch(diff).files)
+
+        return self._run("check_patch", {"sha256": patch_sha256(diff)}, CheckPatchResult, body)
 
 
 def _looks_like_test(path: str) -> bool:

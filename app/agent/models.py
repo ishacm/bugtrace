@@ -95,9 +95,42 @@ EventType = Literal[
     "hypothesis_created",
     "hypothesis_revised",
     "root_cause_found",
+    "patch_proposed",
+    "approval_required",
+    "patch_approved",
+    "patch_rejected",
+    "patch_applied",
     "case_closed",
     "error",
 ]
+
+
+class ProposedPatch(BaseModel):
+    """A validated unified diff awaiting a human decision. Never applied by the agent."""
+
+    patch_id: str
+    sha256: str  # approval is bound to this exact diff
+    attempt: int
+    summary: str
+    rationale: str
+    diff: str
+    affected_files: list[str]
+    evidence_ids: list[str]
+    added_lines: int
+    removed_lines: int
+
+
+class PatchResult(BaseModel):
+    """Outcome of applying an approved patch inside the investigation workspace."""
+
+    applied: bool
+    message: str
+    files: list[str] = Field(default_factory=list)
+    stat: str = ""
+    diff: str = ""  # resulting `git diff` of the workspace (bounded)
+
+
+ApprovalStatus = Literal["pending", "approved", "rejected"]
 
 
 class AgentEvent(BaseModel):
@@ -158,3 +191,10 @@ class RootCauseDraft(BaseModel):
     summary: str
     claims: list[Claim]
     open_questions: list[str]
+
+
+class PatchDraft(BaseModel):
+    summary: str
+    rationale: str
+    diff: str
+    evidence_ids: list[str]

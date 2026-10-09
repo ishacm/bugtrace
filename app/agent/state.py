@@ -6,11 +6,14 @@ from pydantic import BaseModel
 
 from app.agent.models import (
     AgentEvent,
+    ApprovalStatus,
     Evidence,
     FinalReport,
     Hypothesis,
     InvestigationPlan,
     IssueAnalysis,
+    PatchResult,
+    ProposedPatch,
     RootCause,
     Sufficiency,
     Suspect,
@@ -57,7 +60,10 @@ class InvestigationState(TypedDict, total=False):
     errors: list[str]
     events: list[AgentEvent]
 
-    # V2 placeholders (unused in V1).
-    proposed_patch: str | None
-    approval_status: str | None
-    test_result: str | None
+    # V2 patch stage. The graph pauses (interrupt) while approval_status is "pending".
+    max_patch_attempts: int
+    proposed_patch: ProposedPatch | None
+    patch_error: str | None
+    approval_status: ApprovalStatus | None
+    patch_result: PatchResult | None
+    test_result: str | None  # TASK 009

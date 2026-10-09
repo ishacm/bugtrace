@@ -14,16 +14,26 @@
 
   const setStreamState = (text) => { streamState.textContent = text; };
 
+  const post = (path, body) => fetch(`/api/investigations/${id}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
   root.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-cancel]");
-    if (!button) return;
-    button.disabled = true;
-    const response = await fetch(`/api/investigations/${id}/cancel`, { method: "POST" });
+    const cancel = event.target.closest("[data-cancel]");
+    const decision = event.target.closest("[data-decision]");
+    if (!cancel && !decision) return;
+    const buttons = decision ? root.querySelectorAll("[data-decision]") : [cancel];
+    buttons.forEach((b) => { b.disabled = true; });
+    const response = cancel
+      ? await post("cancel")
+      : await post("decision", { decision: decision.dataset.decision });
     if (!response.ok) {
-      button.disabled = false;
-      setStreamState(`Cancel failed (${response.status})`);
+      buttons.forEach((b) => { b.disabled = false; });
+      setStreamState(`Request failed (${response.status})`);
     }
-    // The stream delivers the CANCELLED state from persistence.
+    // The stream delivers the resulting state from persistence.
   });
 
   if (root.dataset.terminal === "true" || !("EventSource" in window)) return;

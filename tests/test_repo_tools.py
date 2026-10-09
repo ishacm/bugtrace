@@ -12,6 +12,7 @@ from app.workspace.manager import WorkspaceManager, new_investigation_id, run_gi
 
 EXPECTED_TOOLS = {
     "list_directory",
+    "check_patch",  # read-only: git apply --check
     "search_code",
     "read_file",
     "find_symbol",

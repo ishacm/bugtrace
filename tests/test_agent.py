@@ -74,6 +74,9 @@ class LocalRepoClient:
     async def git_log(self, path=None, max_count=20):  # noqa: ANN001
         return self.tools.git_log(path, max_count)
 
+    async def check_patch(self, diff):  # noqa: ANN001
+        return self.tools.check_patch(diff)
+
 
 def _ids(prompt: str) -> list[str]:
     return list(dict.fromkeys(EV_RE.findall(prompt)))

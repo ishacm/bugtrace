@@ -1,4 +1,4 @@
-"""Investigation create/read/cancel endpoints. Responses carry agent-safe data only."""
+"""Investigation create/read/cancel/decision endpoints. Responses carry agent-safe data only."""
 
 from datetime import datetime
 from typing import Annotated
@@ -14,11 +14,16 @@ from app.agent.models import (
     Hypothesis,
     InvestigationPlan,
     IssueAnalysis,
+    PatchResult,
+    ProposedPatch,
     Suspect,
 )
 from app.data.models import PublicCase
 from app.services.investigations import CaseNotFoundError, InvestigationService
 from app.storage.models import (
+    Approval,
+    ApprovalDecision,
+    DecisionConflictError,
     InvalidTransitionError,
     InvestigationStatus,
     StoredInvestigation,
@@ -33,6 +38,12 @@ class CreateInvestigationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     instance_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.\-]+$")
+
+
+class DecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: ApprovalDecision
 
 
 class CreateInvestigationResponse(BaseModel):
@@ -59,6 +70,10 @@ class InvestigationResponse(BaseModel):
     limits_reached: list[str] = Field(default_factory=list)
     tool_call_count: int = 0
     iteration: int = 0
+    proposed_patch: ProposedPatch | None = None
+    patch_error: str | None = None
+    approval: Approval | None = None
+    patch_result: PatchResult | None = None
     events: list[AgentEvent] = Field(default_factory=list)
 
     @classmethod
@@ -71,6 +86,7 @@ class InvestigationResponse(BaseModel):
             created_at=stored.created_at,
             updated_at=stored.updated_at,
             error=stored.error,
+            approval=stored.approval,
             events=stored.events,
         )
         record = stored.record
@@ -89,6 +105,9 @@ class InvestigationResponse(BaseModel):
                 "limits_reached": record.limits_reached,
                 "tool_call_count": record.tool_call_count,
                 "iteration": record.iteration,
+                "proposed_patch": record.proposed_patch,
+                "patch_error": record.patch_error,
+                "patch_result": record.patch_result,
             }
         )
 
@@ -136,5 +155,19 @@ async def cancel_investigation(investigation_id: UUID, service: Service) -> Inve
     except InvestigationNotFoundError as exc:
         raise _not_found(investigation_id) from exc
     except InvalidTransitionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return InvestigationResponse.from_stored(stored)
+
+
+@router.post("/{investigation_id}/decision")
+async def decide(
+    investigation_id: UUID, body: DecisionRequest, service: Service
+) -> InvestigationResponse:
+    """Approve or reject the proposed patch; 409 unless the status is AWAITING_APPROVAL."""
+    try:
+        stored = service.decide(str(investigation_id), body.decision)
+    except InvestigationNotFoundError as exc:
+        raise _not_found(investigation_id) from exc
+    except (DecisionConflictError, InvalidTransitionError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return InvestigationResponse.from_stored(stored)

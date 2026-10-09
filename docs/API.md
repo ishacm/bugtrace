@@ -27,7 +27,7 @@ Request:
 {"decision":"approve"}
 ```
 or `reject`.
-Return `409` unless status is `AWAITING_APPROVAL`.
+Return `409` unless status is `AWAITING_APPROVAL` with a proposed patch and no prior decision. `approve` moves to `PATCHING` and resumes the paused graph; `reject` moves to `UNRESOLVED` and leaves the workspace unchanged.
 
 ### `GET /api/investigations/{id}/events`
 Server-Sent Events stream.
@@ -45,6 +45,9 @@ Server-Sent Events stream.
 - `root_cause_found`
 - `patch_proposed`
 - `approval_required`
+- `patch_approved`
+- `patch_rejected`
+- `patch_applied`
 - `evaluation_started`
 - `evaluation_completed`
 - `case_closed`

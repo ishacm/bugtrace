@@ -23,6 +23,8 @@ class ToolErrorCode(StrEnum):
     TOO_LARGE = "TOO_LARGE"
     TIMEOUT = "TIMEOUT"
     COMMAND_FAILED = "COMMAND_FAILED"
+    PATCH_REJECTED = "PATCH_REJECTED"
+    NOT_AUTHORIZED = "NOT_AUTHORIZED"
 
 
 class ToolError(BaseModel):
@@ -108,3 +110,16 @@ class GitTextResult(ToolResponse):
 class ListTestFilesResult(ToolResponse):
     path: str = ""
     files: list[str] = Field(default_factory=list)
+
+
+class CheckPatchResult(ToolResponse):
+    """`git apply --check` outcome; `ok` means the patch applies cleanly. Never mutates."""
+
+    files: list[str] = Field(default_factory=list)
+
+
+class ApplyPatchResult(ToolResponse):
+    applied: bool = False
+    files: list[str] = Field(default_factory=list)
+    stat: str = ""
+    diff: str = ""

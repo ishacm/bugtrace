@@ -34,8 +34,10 @@ class Settings(BaseSettings):
 
     agent_max_iterations: int = Field(default=4, ge=1, le=10)
     agent_max_tool_calls: int = Field(default=30, ge=1, le=200)
+    agent_max_patch_attempts: int = Field(default=2, ge=1, le=5)
     investigations_dir: Path = Path("var/investigations")
     database_path: Path = Path("var/bugtrace.db")
+    checkpoint_path: Path = Path("var/checkpoints.db")  # LangGraph approval-pause checkpoints
     stream_poll_seconds: float = Field(default=0.5, gt=0, le=10)
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
 

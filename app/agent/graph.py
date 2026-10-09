@@ -1,11 +1,18 @@
-"""The single BugTrace investigation graph (V1: investigate and explain, no patching)."""
+"""The single BugTrace investigation graph.
+
+V1: investigate and explain. V2: after a COMPLETED report, propose a validated
+patch, pause at a persistent interrupt for a human decision, and apply the patch
+(through the privileged client) only after approval.
+"""
 
 import hashlib
 import re
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import interrupt
 from pydantic import BaseModel
 
 from app.agent import prompts
@@ -22,13 +29,18 @@ from app.agent.models import (
     HypothesisDraft,
     InvestigationPlan,
     IssueAnalysis,
+    PatchDraft,
+    PatchResult,
+    ProposedPatch,
     RootCause,
     RootCauseDraft,
     Sufficiency,
     Suspect,
 )
+from app.agent.patches import InvalidPatchError, parse_unified_diff, patch_sha256
 from app.agent.state import CandidateHit, InvestigationState
 from app.agent.tools import (
+    PatchApplier,
     ToolExecutor,
     evidence_from_log,
     evidence_from_read,
@@ -86,16 +98,22 @@ def assess_sufficiency(hypothesis: Hypothesis | None, evidence: list[Evidence]) 
     return Sufficiency(sufficient=True, confidence=Confidence.MEDIUM, reasons=reasons)
 
 
+def known_paths(evidence: list[Evidence]) -> set[str]:
+    """Repository paths that tools actually returned (evidence paths and match locations)."""
+    paths = {e.path for e in evidence if e.path}
+    paths |= {
+        line.split(":", 1)[0] for e in evidence for line in e.excerpt.splitlines() if ":" in line
+    }
+    return paths
+
+
 def rank_suspects(drafts: list[Any], evidence: list[Evidence]) -> list[Suspect]:
     """Score = distinct valid supporting evidence + 1 if any is code evidence on that path."""
     by_id = {e.evidence_id: e for e in evidence}
-    known_paths = {e.path for e in evidence if e.path}
-    known_paths |= {
-        line.split(":", 1)[0] for e in evidence for line in e.excerpt.splitlines() if ":" in line
-    }
+    paths = known_paths(evidence)
     merged: dict[tuple[str, str | None], Suspect] = {}
     for draft in drafts:
-        if draft.path not in known_paths:
+        if draft.path not in paths:
             continue  # never accept a file the tools did not return
         ids = [i for i in dict.fromkeys(draft.evidence_ids) if i in by_id]
         if not ids:
@@ -194,7 +212,28 @@ def _event(type_: str, title: str, message: str, **metadata: Any) -> AgentEvent:
 # --- graph -------------------------------------------------------------------
 
 
-def build_graph(model: ModelClient, executor: ToolExecutor) -> CompiledStateGraph:
+def _format_report(report: FinalReport) -> str:
+    claims = "\n".join(f"- {c.statement} [{', '.join(c.evidence_ids)}]" for c in report.claims)
+    return f"{report.summary}\nConfidence: {report.confidence}\nClaims:\n{claims or '(none)'}"
+
+
+def _format_suspects(suspects: list[Suspect]) -> str:
+    lines = [
+        f"#{s.rank} {s.path}{'::' + s.symbol if s.symbol else ''} (score {s.score}): {s.reason}"
+        f" [{', '.join(s.evidence_ids)}]"
+        for s in suspects
+    ]
+    return "\n".join(lines) or "(none)"
+
+
+def build_graph(
+    model: ModelClient,
+    executor: ToolExecutor,
+    *,
+    patcher: PatchApplier | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
+    """`patcher` is only supplied when resuming after a human approval."""
     system = prompts.render("system")
 
     async def ask[T: BaseModel](prompt_name: str, schema: type[T], **values: Any) -> T:
@@ -612,6 +651,115 @@ def build_graph(model: ModelClient, executor: ToolExecutor) -> CompiledStateGrap
         )
         return {"final_report": report, "tool_call_count": executor.calls}
 
+    # --- V2 patch stage ---------------------------------------------------------
+
+    async def validated_patch(
+        draft: PatchDraft, attempt: int, evidence: list[Evidence]
+    ) -> ProposedPatch:
+        parsed = parse_unified_diff(draft.diff)
+        grounded = known_paths(evidence)
+        ungrounded = [f for f in parsed.files if f not in grounded]
+        if ungrounded:
+            raise InvalidPatchError(f"patch modifies files not found in evidence: {ungrounded}")
+        known_ids = {e.evidence_id for e in evidence}
+        ids = [i for i in dict.fromkeys(draft.evidence_ids) if i in known_ids]
+        if not ids:
+            raise InvalidPatchError("patch cites no known evidence IDs")
+        check = await executor.check_patch(parsed.diff)
+        if not check.ok:
+            raise InvalidPatchError(check.error.message if check.error else "patch check failed")
+        sha = patch_sha256(parsed.diff)
+        return ProposedPatch(
+            patch_id=f"patch-{sha[:12]}",
+            sha256=sha,
+            attempt=attempt,
+            summary=draft.summary,
+            rationale=draft.rationale,
+            diff=parsed.diff,
+            affected_files=parsed.files,
+            evidence_ids=ids,
+            added_lines=parsed.added,
+            removed_lines=parsed.removed,
+        )
+
+    async def propose_patch(state: InvestigationState) -> dict[str, Any]:
+        report = _require(state["final_report"], "final_report")
+        evidence = state["evidence"]
+        suspect_paths = {s.path for s in state["suspects"]}
+        code = [e for e in evidence if e.type == EvidenceType.CODE]
+        focused = [e for e in code if e.path in suspect_paths] or code
+        errors, events = list(state["errors"]), list(state["events"])
+        feedback, problem = "", "no attempts made"
+        for attempt in range(1, state["max_patch_attempts"] + 1):
+            try:
+                draft = await ask(
+                    "propose_patch",
+                    PatchDraft,
+                    root_cause=_format_report(report),
+                    suspects=_format_suspects(state["suspects"]),
+                    evidence=_format_evidence(focused),
+                    feedback=feedback,
+                )
+            except ModelError as exc:
+                errors.append(f"propose_patch: {exc}")
+                problem = f"model error: {exc}"
+                break
+            try:
+                patch = await validated_patch(draft, attempt, evidence)
+            except InvalidPatchError as exc:
+                problem = str(exc)
+                feedback = f"\nYour previous diff was rejected: {problem}\nCorrect it.\n"
+                continue
+            events.append(
+                _event(
+                    "patch_proposed",
+                    "PATCH PROPOSED",
+                    patch.summary,
+                    patch_id=patch.patch_id,
+                    files=patch.affected_files,
+                )
+            )
+            return {
+                "proposed_patch": patch,
+                "patch_error": None,
+                "approval_status": "pending",
+                "events": events,
+                "errors": errors,
+            }
+        events.append(_event("error", "NO VALID PATCH", problem))
+        return {"proposed_patch": None, "patch_error": problem, "events": events, "errors": errors}
+
+    def pause_for_approval(state: InvestigationState) -> dict[str, Any]:
+        patch = _require(state["proposed_patch"], "proposed_patch")
+        # Persistent pause: the run stops here until resumed with a human decision.
+        decision = interrupt({"patch_id": patch.patch_id, "sha256": patch.sha256})
+        approved = (
+            isinstance(decision, dict)
+            and decision.get("decision") == "approve"
+            and decision.get("sha256") == patch.sha256
+        )
+        return {"approval_status": "approved" if approved else "rejected"}
+
+    async def apply_patch(state: InvestigationState) -> dict[str, Any]:
+        if state.get("approval_status") != "approved" or patcher is None:
+            raise RuntimeError("apply_patch reached without approval or patch client")
+        result = await patcher.apply_patch()
+        events = list(state["events"])
+        if result.ok and result.applied:
+            outcome = PatchResult(
+                applied=True,
+                message="Patch applied in the investigation workspace (not committed).",
+                files=result.files,
+                stat=result.stat,
+                diff=result.diff,
+            )
+            events.append(_event("patch_applied", "PATCH APPLIED", ", ".join(result.files)))
+        else:
+            message = result.error.message if result.error else "patch was not applied"
+            outcome = PatchResult(applied=False, message=message)
+            events.append(_event("error", "PATCH NOT APPLIED", message))
+        return {"patch_result": outcome, "events": events}
+
     graph = StateGraph(InvestigationState)
     graph.add_node("understand_issue", understand_issue)
     graph.add_node("create_plan", create_plan)
@@ -622,6 +770,9 @@ def build_graph(model: ModelClient, executor: ToolExecutor) -> CompiledStateGrap
     graph.add_node("verify_evidence", verify_evidence)
     graph.add_node("produce_root_cause", produce_root_cause)
     graph.add_node("finalize", finalize)
+    graph.add_node("propose_patch", propose_patch)
+    graph.add_node("pause_for_approval", pause_for_approval)
+    graph.add_node("apply_patch", apply_patch)
 
     graph.add_edge(START, "understand_issue")
     graph.add_edge("understand_issue", "create_plan")
@@ -636,12 +787,33 @@ def build_graph(model: ModelClient, executor: ToolExecutor) -> CompiledStateGrap
         {"search_repository": "search_repository", "produce_root_cause": "produce_root_cause"},
     )
     graph.add_edge("produce_root_cause", "finalize")
-    graph.add_edge("finalize", END)
-    return graph.compile()
+    # Patches are proposed only for a COMPLETED (grounded, sufficient) root cause.
+    graph.add_conditional_edges(
+        "finalize",
+        lambda state: "propose_patch" if state["final_report"].status == "COMPLETED" else END,
+        {"propose_patch": "propose_patch", END: END},
+    )
+    graph.add_conditional_edges(
+        "propose_patch",
+        lambda state: "pause_for_approval" if state.get("proposed_patch") else END,
+        {"pause_for_approval": "pause_for_approval", END: END},
+    )
+    graph.add_conditional_edges(
+        "pause_for_approval",
+        lambda state: "apply_patch" if state["approval_status"] == "approved" else END,
+        {"apply_patch": "apply_patch", END: END},
+    )
+    graph.add_edge("apply_patch", END)
+    return graph.compile(checkpointer=checkpointer)
 
 
 def initial_state(
-    *, investigation_id: str, case: Any, max_iterations: int, max_tool_calls: int
+    *,
+    investigation_id: str,
+    case: Any,
+    max_iterations: int,
+    max_tool_calls: int,
+    max_patch_attempts: int = 2,
 ) -> InvestigationState:
     return InvestigationState(
         investigation_id=investigation_id,
@@ -668,12 +840,16 @@ def initial_state(
         limits_reached=[],
         errors=[],
         events=[],
+        max_patch_attempts=max_patch_attempts,
         proposed_patch=None,
+        patch_error=None,
         approval_status=None,
+        patch_result=None,
         test_result=None,
     )
 
 
-# Each loop pass visits 5 nodes; this backstop sits well above any bounded run.
+# Each loop pass visits 5 nodes; this backstop sits well above any bounded run
+# (including the patch stage after finalize).
 def recursion_limit(max_iterations: int) -> int:
-    return 10 + 6 * max_iterations
+    return 14 + 6 * max_iterations

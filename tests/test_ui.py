@@ -52,12 +52,14 @@ def ui_env(tmp_path: Path, fixture_repo: tuple[Path, list[str]]) -> dict[str, An
         cases_path=cases_path,
         database_path=tmp_path / "db" / "bugtrace.db",
         workspaces_dir=tmp_path / "workspaces",
+        checkpoint_path=tmp_path / "db" / "checkpoints.db",
         stream_poll_seconds=0.02,
     )
     return {"settings": settings, "origin": origin, "case": case, "tmp": tmp_path}
 
 
 def _backend(ui_env: dict[str, Any], **kwargs: Any) -> FakeBackend:
+    kwargs.setdefault("database_path", ui_env["settings"].database_path)
     return FakeBackend(ui_env["tmp"] / "workspaces", ui_env["origin"], **kwargs)
 
 
@@ -341,7 +343,7 @@ def test_sse_replays_persisted_events_then_ends(
     states = [m for m in messages if m["event"] == "state"]
     assert len(states) == 1 and states[0]["data"]["terminal"] is True
     panels = states[0]["data"]["panels"]
-    assert set(panels) == {"status", "suspects", "evidence", "hypothesis", "report"}
+    assert set(panels) == {"status", "suspects", "evidence", "hypothesis", "report", "proposal"}
     assert "STUB SUMMARY COMPLETED" in panels["report"]
     assert messages[-1]["event"] == "end"
     assert messages[-1]["data"]["status"] == "UNRESOLVED"
@@ -408,6 +410,7 @@ def _service(ui_env: dict[str, Any], **backend_kwargs: Any) -> InvestigationServ
         cases_path=settings.cases_path,
         max_iterations=settings.agent_max_iterations,
         max_tool_calls=settings.agent_max_tool_calls,
+        checkpoint_path=settings.checkpoint_path,
     )
 
 

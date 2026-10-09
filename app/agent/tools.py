@@ -4,6 +4,8 @@ from typing import Protocol
 
 from app.agent.models import Evidence, EvidenceType
 from app.mcp_servers.models import (
+    ApplyPatchResult,
+    CheckPatchResult,
     FindSymbolResult,
     GitLogResult,
     ReadFileResult,
@@ -28,6 +30,14 @@ class RepoToolClient(Protocol):
     async def find_symbol(self, symbol: str, max_results: int = 50) -> FindSymbolResult: ...
 
     async def git_log(self, path: str | None = None, max_count: int = 20) -> GitLogResult: ...
+
+    async def check_patch(self, diff: str) -> CheckPatchResult: ...
+
+
+class PatchApplier(Protocol):
+    """The privileged patch client. Only the post-approval graph node receives one."""
+
+    async def apply_patch(self) -> ApplyPatchResult: ...
 
 
 class ToolExecutor:
@@ -69,6 +79,10 @@ class ToolExecutor:
         if not self._take():
             return None
         return await self._client.git_log(path=path, max_count=max_count)
+
+    async def check_patch(self, diff: str) -> CheckPatchResult:
+        """Patch validation is not investigation; it does not consume the tool budget."""
+        return await self._client.check_patch(diff)
 
 
 def _clip(text: str) -> str:

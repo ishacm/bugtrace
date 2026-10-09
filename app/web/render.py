@@ -12,16 +12,23 @@ from fastapi.templating import Jinja2Templates
 
 from app.agent.models import AgentEvent
 from app.api.investigations import InvestigationResponse
-from app.storage.models import TERMINAL_STATUSES, InvestigationStatus, StoredInvestigation
+from app.storage.models import (
+    TERMINAL_STATUSES,
+    ApprovalDecision,
+    InvestigationStatus,
+    StoredInvestigation,
+)
 
 S = InvestigationStatus
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 
 # Panels replaced as a unit on every state update; names match `data-panel` in the page.
-PANELS = ("status", "suspects", "evidence", "hypothesis", "report")
+PANELS = ("status", "suspects", "evidence", "hypothesis", "report", "proposal")
 
-VerdictKind = Literal["running", "completed", "partial", "unresolved", "failed", "cancelled"]
+VerdictKind = Literal[
+    "running", "awaiting", "completed", "partial", "unresolved", "failed", "cancelled"
+]
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,16 @@ def verdict(inv: InvestigationResponse) -> Verdict:
     status, report = inv.status, inv.report
     if status in (S.CREATED, S.PREPARING):
         return Verdict("running", "PREPARING WORKSPACE", f"Checking out {inv.case.repo}.")
+    if status == S.AWAITING_APPROVAL:
+        return Verdict(
+            "awaiting",
+            "AWAITING APPROVAL",
+            "A patch has been proposed. The repository will not change unless you approve it.",
+        )
+    if status == S.PATCHING:
+        return Verdict(
+            "running", "APPLYING APPROVED PATCH", "Applying the approved diff in the workspace."
+        )
     if status not in TERMINAL_STATUSES:
         return Verdict("running", "INVESTIGATION IN PROGRESS", "The agent is gathering evidence.")
     if status == S.FAILED:
@@ -48,14 +65,35 @@ def verdict(inv: InvestigationResponse) -> Verdict:
         )
     if status == S.RESOLVED:
         return Verdict("completed", "CASE CLOSED", "The proposed fix passed evaluation.")
+    if inv.approval is not None and inv.approval.decision == ApprovalDecision.REJECT:
+        return Verdict(
+            "unresolved",
+            "PATCH REJECTED",
+            "The proposed patch was rejected. The workspace was left unchanged.",
+        )
+    if inv.approval is not None:
+        result = inv.patch_result
+        if result is not None and result.applied:
+            return Verdict(
+                "completed",
+                "PATCH APPLIED",
+                "The approved patch was applied in the investigation workspace (not committed). "
+                "It has not been evaluated, so the case remains UNRESOLVED.",
+            )
+        return Verdict(
+            "failed",
+            "PATCH NOT APPLIED",
+            result.message if result else "No result was recorded for the approved patch.",
+        )
     if report is None:
         return Verdict("unresolved", "UNRESOLVED", "No root-cause report was produced.")
     if report.status == "COMPLETED":
+        no_patch = f" No valid patch was proposed: {inv.patch_error}" if inv.patch_error else ""
         return Verdict(
             "completed",
             "ROOT CAUSE IDENTIFIED",
-            f"Report completed with {report.confidence} confidence. No fix has been proposed "
-            "or evaluated yet, so the case remains UNRESOLVED.",
+            f"Report completed with {report.confidence} confidence.{no_patch} "
+            "No fix has been evaluated, so the case remains UNRESOLVED.",
         )
     return Verdict(
         "partial",

@@ -17,6 +17,9 @@ from app.agent.models import AgentEvent
 from app.agent.runner import InvestigationRecord
 from app.data.models import PublicCase
 from app.storage.models import (
+    Approval,
+    ApprovalDecision,
+    DecisionConflictError,
     InvestigationStatus,
     InvestigationSummary,
     StoredInvestigation,
@@ -40,6 +43,13 @@ CREATE TABLE IF NOT EXISTS investigation_events (
     source           TEXT NOT NULL,
     event_json       TEXT NOT NULL,
     PRIMARY KEY (investigation_id, seq)
+);
+CREATE TABLE IF NOT EXISTS investigation_approvals (
+    investigation_id TEXT PRIMARY KEY REFERENCES investigations(investigation_id),
+    decision         TEXT NOT NULL,
+    patch_id         TEXT NOT NULL,
+    patch_sha256     TEXT NOT NULL,
+    decided_at       TEXT NOT NULL
 );
 """
 
@@ -127,6 +137,45 @@ class InvestigationStore:
             new = record.events[stored:]
             self._insert_events(conn, record.investigation_id, new, source="agent")
 
+    def record_decision(
+        self, investigation_id: str, decision: ApprovalDecision, *, event: AgentEvent
+    ) -> StoredInvestigation:
+        """Atomically record a human decision on the proposed patch and move the status.
+
+        approve: AWAITING_APPROVAL -> PATCHING; reject: AWAITING_APPROVAL -> UNRESOLVED.
+        Raises DecisionConflictError unless the investigation is awaiting approval of
+        a proposed patch and has no decision yet.
+        """
+        target = (
+            InvestigationStatus.PATCHING
+            if decision == ApprovalDecision.APPROVE
+            else InvestigationStatus.UNRESOLVED
+        )
+        with self._connect() as conn:
+            row = self._row(conn, investigation_id)
+            current = InvestigationStatus(row["status"])
+            if current != InvestigationStatus.AWAITING_APPROVAL:
+                raise DecisionConflictError(f"investigation is {current}, not AWAITING_APPROVAL")
+            check_transition(current, target)
+            record = json.loads(row["record_json"]) if row["record_json"] else {}
+            patch = record.get("proposed_patch")
+            if not patch:
+                raise DecisionConflictError("investigation has no proposed patch")
+            try:
+                conn.execute(
+                    "INSERT INTO investigation_approvals (investigation_id, decision, patch_id,"
+                    " patch_sha256, decided_at) VALUES (?, ?, ?, ?, ?)",
+                    (investigation_id, decision.value, patch["patch_id"], patch["sha256"], _now()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DecisionConflictError("a decision was already recorded") from exc
+            conn.execute(
+                "UPDATE investigations SET status = ?, updated_at = ? WHERE investigation_id = ?",
+                (target.value, _now(), investigation_id),
+            )
+            self._insert_events(conn, investigation_id, [event], source="service")
+        return self.get(investigation_id)
+
     def append_event(self, investigation_id: str, event: AgentEvent) -> None:
         with self._connect() as conn:
             self._row(conn, investigation_id)
@@ -138,6 +187,18 @@ class InvestigationStore:
         with self._connect() as conn:
             row = self._row(conn, investigation_id)
             events = self._events(conn, investigation_id)
+            approval_row = conn.execute(
+                "SELECT * FROM investigation_approvals WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+        approval = None
+        if approval_row is not None:
+            approval = Approval(
+                decision=ApprovalDecision(approval_row["decision"]),
+                patch_id=approval_row["patch_id"],
+                patch_sha256=approval_row["patch_sha256"],
+                decided_at=datetime.fromisoformat(approval_row["decided_at"]),
+            )
         record = None
         if row["record_json"] is not None:
             data = json.loads(row["record_json"])
@@ -152,6 +213,7 @@ class InvestigationStore:
             error=row["error"],
             events=events,
             record=record,
+            approval=approval,
         )
 
     def events(self, investigation_id: str) -> list[AgentEvent]:

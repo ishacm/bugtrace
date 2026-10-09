@@ -53,6 +53,12 @@ async def investigate(instance_id: str | None, investigation_id: str | None) -> 
         print(f"  - {claim.statement} {claim.evidence_ids}")
     for error in record.errors:
         print(f"  ! {error}")
+    if record.proposed_patch:
+        patch = record.proposed_patch
+        print(f"PATCH PROPOSED {patch.patch_id} {patch.affected_files}: {patch.summary}")
+        print("  approve or reject in the UI / POST /api/investigations/{id}/decision")
+    elif record.patch_error:
+        print(f"NO VALID PATCH: {record.patch_error}")
     print(f"record: {path} (db: {settings.database_path})")
     return 0
 

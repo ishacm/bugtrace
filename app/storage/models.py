@@ -31,7 +31,9 @@ TRANSITIONS: dict[InvestigationStatus, frozenset[InvestigationStatus]] = {
     S.PREPARING: frozenset({S.INVESTIGATING, S.FAILED, S.CANCELLED}),
     S.INVESTIGATING: frozenset({S.AWAITING_APPROVAL, S.UNRESOLVED, S.FAILED, S.CANCELLED}),
     S.AWAITING_APPROVAL: frozenset({S.PATCHING, S.UNRESOLVED, S.CANCELLED}),
-    S.PATCHING: frozenset({S.EVALUATING, S.FAILED, S.CANCELLED}),
+    # PATCHING -> UNRESOLVED: patch applied (or not applicable) without evaluation.
+    # TASK 009 routes applied patches through EVALUATING instead.
+    S.PATCHING: frozenset({S.EVALUATING, S.UNRESOLVED, S.FAILED, S.CANCELLED}),
     S.EVALUATING: frozenset({S.RESOLVED, S.UNRESOLVED, S.AWAITING_APPROVAL, S.FAILED, S.CANCELLED}),
     S.RESOLVED: frozenset(),
     S.UNRESOLVED: frozenset(),
@@ -60,6 +62,24 @@ def check_transition(current: InvestigationStatus, target: InvestigationStatus) 
         raise InvalidTransitionError(current, target)
 
 
+class DecisionConflictError(ValueError):
+    """A decision that the current state does not accept (wrong status, no patch, decided)."""
+
+
+class ApprovalDecision(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+
+
+class Approval(BaseModel):
+    """A human decision on one exact proposed patch (bound by its sha256)."""
+
+    decision: ApprovalDecision
+    patch_id: str
+    patch_sha256: str
+    decided_at: datetime
+
+
 class StoredInvestigation(BaseModel):
     """One investigation. `record` reuses the agent's InvestigationRecord snapshot;
     `events` is the full timeline (agent + lifecycle events)."""
@@ -72,6 +92,7 @@ class StoredInvestigation(BaseModel):
     error: str | None = None
     events: list[AgentEvent] = Field(default_factory=list)
     record: InvestigationRecord | None = None
+    approval: Approval | None = None
 
 
 class InvestigationSummary(BaseModel):
