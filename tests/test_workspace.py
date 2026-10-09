@@ -16,30 +16,7 @@ from app.workspace.manager import (
 )
 from app.workspace.paths import PathOutsideWorkspaceError, resolve_inside
 from app.workspace.runner import CommandError, CommandTimeoutError, run_command
-
-
-def _git(cwd: Path, *args: str) -> str:
-    env = {
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.com",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.com",
-    }
-    return run_command(["git", *args], cwd=cwd, timeout=30, env=env).stdout.strip()
-
-
-@pytest.fixture(scope="module")
-def fixture_repo(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, list[str]]:
-    """Tiny origin repo with three commits; returns (path, [sha1, sha2, sha3])."""
-    origin = tmp_path_factory.mktemp("origin")
-    _git(origin, "init", "--quiet", "--initial-branch=main")
-    shas = []
-    for i in range(3):
-        (origin / "module.py").write_text(f"VERSION = {i}\n")
-        _git(origin, "add", "module.py")
-        _git(origin, "commit", "--quiet", "-m", f"commit {i}")
-        shas.append(_git(origin, "rev-parse", "HEAD"))
-    return origin, shas
+from tests.conftest import fixture_git as _git
 
 
 def _case(sha: str) -> PublicCase:

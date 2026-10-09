@@ -23,6 +23,7 @@ class CommandResult(BaseModel):
     returncode: int
     stdout: str
     stderr: str
+    stdout_truncated: bool = False
 
 
 class CommandError(RuntimeError):
@@ -35,10 +36,10 @@ class CommandTimeoutError(CommandError):
     pass
 
 
-def _bounded(text: str) -> str:
-    if len(text) <= MAX_OUTPUT_CHARS:
+def _bounded(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    if len(text) <= limit:
         return text
-    return text[:MAX_OUTPUT_CHARS] + "\n...[truncated]"
+    return text[:limit] + "\n...[truncated]"
 
 
 def _safe_env(extra: dict[str, str] | None) -> dict[str, str]:
@@ -54,6 +55,7 @@ def run_command(
     timeout: float,
     env: dict[str, str] | None = None,
     check: bool = True,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
 ) -> CommandResult:
     if isinstance(args, str) or not args or not all(isinstance(a, str) for a in args):
         raise ValueError("args must be a non-empty sequence of strings")
@@ -84,7 +86,8 @@ def run_command(
         args=arg_list,
         cwd=cwd,
         returncode=completed.returncode,
-        stdout=_bounded(completed.stdout),
+        stdout=_bounded(completed.stdout, max_output_chars),
+        stdout_truncated=len(completed.stdout) > max_output_chars,
         stderr=_bounded(completed.stderr),
     )
     if check and result.returncode != 0:

@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from app.data.models import PublicCase
-from app.workspace.runner import CommandError, run_command
+from app.workspace.runner import MAX_OUTPUT_CHARS, CommandError, CommandResult, run_command
 
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -27,6 +27,31 @@ class Workspace(BaseModel):
     instance_id: str
     repo_path: Path
     base_commit: str
+
+
+def run_git(
+    repo: Path,
+    *args: str,
+    timeout: float,
+    check: bool = True,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
+) -> CommandResult:
+    """Run git confined to `repo`; the single hardened git entry point."""
+    # Ceiling dirs stop git from walking up into an enclosing repository
+    # (e.g. the BugTrace checkout when workspaces live under var/).
+    env = {
+        "GIT_CEILING_DIRECTORIES": str(repo.parent),
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ALLOW_PROTOCOL": "https:file",
+    }
+    return run_command(
+        ["git", "-c", "core.fsmonitor=false", *args],
+        cwd=repo,
+        timeout=timeout,
+        env=env,
+        check=check,
+        max_output_chars=max_output_chars,
+    )
 
 
 def new_investigation_id() -> str:
@@ -70,15 +95,7 @@ class WorkspaceManager:
         return self.workspace_dir(investigation_id) / "repo"
 
     def _git(self, repo: Path, *args: str, timeout: float | None = None) -> str:
-        # Ceiling dirs stop git from walking up into an enclosing repository
-        # (e.g. the BugTrace checkout when workspaces live under var/).
-        env = {
-            "GIT_CEILING_DIRECTORIES": str(repo.parent),
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_ALLOW_PROTOCOL": "https:file",
-        }
-        result = run_command(["git", *args], cwd=repo, timeout=timeout or self.git_timeout, env=env)
-        return result.stdout.strip()
+        return run_git(repo, *args, timeout=timeout or self.git_timeout).stdout.strip()
 
     def _assert_isolated(self, repo: Path) -> None:
         if repo == self.source_root or repo.is_relative_to(self.source_root / ".git"):
