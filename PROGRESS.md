@@ -4,7 +4,7 @@
 V1
 
 ## Current task
-TASK 010 — Regression evals + CI
+TASK 011 — Vertex AI + Cloud Run
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -16,7 +16,7 @@ TASK 010 — Regression evals + CI
 - [x] TASK 007 — Detective UI + live streaming
 - [x] TASK 008 — Patch proposal + human approval
 - [x] TASK 009 — SWE-bench evaluation
-- [ ] TASK 010 — Regression evals + CI
+- [x] TASK 010 — Regression evals + CI
 - [ ] TASK 011 — Vertex AI + Cloud Run
 - [ ] TASK 012 — Polish + optional V3 extension
 
@@ -49,6 +49,36 @@ TASK 009: `make format`, `make lint` clean; `make test` — 254 passed, 2 skippe
 - Leakage tests were tightened: the agent, MCP, workspace and data packages import nothing from `app.evaluation`. A subprocess probe shows that importing the agent and both MCP servers loads only `app.evaluation.models` (gold-free), not `gold`. Result and request models contain no gold field names.
 
 `make eval-integration` (`SWEBENCH_INTEGRATION=1`): the real reference row for `astropy__astropy-12907` was fetched from `SWE-bench/SWE-bench_Verified` and cached. Its base commit matches the seeded case and it has the harness 5.x fields (passed). The oracle harness run was skipped because Docker is not installed. `uv run --isolated --with swebench==5.0.2 python -m swebench.harness.run_evaluation --help` succeeded and lists every flag BugTrace passes. A manual run of the real `SwebenchEvaluator` on the real case returned `UNAVAILABLE / DOCKER_UNAVAILABLE` with localization computed from the real reference row. That run used a hand-written suspect list, so it is not a benchmark result. **No real harness verdict (RESOLVED/UNRESOLVED) has been produced yet.** It needs Docker. Acceptance is met via the documented-limitation branch: every boundary is implemented and tested.
+
+TASK 010: `make format`, `make lint` clean; `make test` — 295 passed, 2 skipped (the opt-in real-case tests). 41 new tests.
+
+`tests/test_regression.py` (31 tests) runs the 10 scenarios in `tests/regression/scenarios.json` once per module. Each goes through the real API, service, store, graph, privileged patch tools and evaluator boundary, with the stub model, the fixture repo, and either a static evaluator or the fake harness subprocess. Scenarios: approved + RESOLVED / tests fail / evaluator unavailable / evaluator timeout / evaluator crash; fake harness resolved; fake harness apply-fail; rejected; invalid patch; partial report. It checks:
+- Every status actually stored (wrapped store methods) equals the scenario's expected path, and every edge is in `TRANSITIONS`.
+- RESOLVED comes only from a harness `resolved: true`.
+- Claims, cited ids, suspects and patch evidence are all recorded evidence. The invented file and id are dropped.
+- The workspace is clean while AWAITING_APPROVAL. Only approved files change, and only after approval. HEAD is unchanged, there are 0 unauthorized writes, the BugTrace tree is untouched, and each investigation has its own workspace.
+- The sha256 matches across proposal, approval, evaluator request and result. A diff tampered with after approval is refused by `build_request`.
+- No gold keys or text in API bodies, pages, SSE streams, LangGraph checkpoint bytes or agent records.
+- After a restart, every GET is identical.
+- SSE replays the persisted timeline in order, and its final `state` panels equal `render_panels(stored)`.
+- Evaluator status/flag maps to case status and verdict (RESOLVED without `resolved: true` shows as EVALUATION ERROR and ends UNRESOLVED).
+- The stub report's summary equals the committed baseline. Exit policy: regression → 1, unauthorized write → 2.
+- Report metrics equal the persisted values. Localization appears only where the harness computed it.
+
+`tests/test_ci.py` (10 tests):
+- Normal CI has no secrets, Gemini, Docker or dispatch.
+- The eval workflow is `workflow_dispatch` only.
+- Secrets and inputs reach the shell only through step `env:`; there is no `set -x` and no echoing of the key.
+- `Settings` never renders the key.
+- `agent_eval.py` exits 3 without a key and before any model call.
+- The live manifest has 1–3 seeded, safe ids. The manifest rejects answer fields and traversal ids.
+- The stub baseline is a produced summary.
+
+A new autouse fixture removes `GEMINI_API_KEY` from every test.
+
+Ran 4× back to back: deterministic. Workflows validated with `actionlint` 1.7.12 (no findings). A clean-checkout simulation (fresh git repo, no `.env`, no venv, no key, `env -i`, CI env vars) ran `uv sync --locked`, `make lint` and `make test`: 295 passed, 2 skipped, and it wrote `var/evals/regression.json`. The workflows have not run on GitHub yet: this repository has no remote.
+
+Stub baseline (`evals/baselines/stub.json`): produced by the deterministic stub run, not a model benchmark. 10 scenarios; 9 COMPLETED reports; 8 patches proposed; 7 applied; 4 graded; 2 resolved; top-1 1.0 and top-3 0.5 (fixture reference only); grounding 1.0; 0 unauthorized writes; 50 tool calls. **No live baseline exists. No live agent evaluation has been run** (needs the Gemini key/quota and, with `--approve-patches`, Docker).
 
 ## Blockers
 None. Real SWE-bench grading needs Docker, which is not installed here.
@@ -102,8 +132,18 @@ None. Real SWE-bench grading needs Docker, which is not installed here.
 - Apple Silicon: the harness 5.x images are `x86_64` (e.g. `swebench/sweb.eval.x86_64.astropy_1776_astropy-12907`). On arm64 they need Docker Desktop's x86 emulation and will be slow. If an image cannot run, evaluation ends ERROR/TIMEOUT and the rest of BugTrace is unaffected.
 - `fetch_raw_rows` now pages through `iter_raw_rows` with 100-row pages; the seed output is unchanged.
 
+- CI (`.github/workflows/ci.yml`): push to main and PRs. `uv sync --locked`, `make lint` (ruff check + format check), `make test` (unit, fixture-repo integration, regression scenarios), and upload of `regression-report`. No secrets, Gemini, Docker or network-dependent tests. The real-case tests skip unless `SWEBENCH_INTEGRATION=1`.
+- Manual evaluation (`.github/workflows/agent-eval.yml`, `workflow_dispatch` only). Job `swebench-integration` runs `make eval-integration` on a Docker-equipped runner with no secrets. Job `agent-eval` runs `scripts/agent_eval.py` over `evals/cases.json` (3 seeded astropy cases). It needs the `GEMINI_API_KEY` secret and a `model_name` input or the `BUGTRACE_MODEL_NAME` repo variable. It uploads `agent-eval.json` and the agent-safe investigation records. Reference/run dirs (`var/evaluations`) are not uploaded. Inputs reach the shell only via `env:` (no `${{ }}` in `run:`), and the secret is scoped to the steps that use it.
+- The `approve_patches` dispatch input is treated as the human's explicit approval for that run. Each proposal is approved through the normal decision path (recorded and sha256-bound), applied only in its own workspace, then graded. Without it, proposals stay AWAITING_APPROVAL and nothing is applied.
+- Reports (`app/evaluation/report.py`, gold-free): `RunReport` holds the mode (`stub`|`live`), config, per-case `CaseReport` and a `Summary` (completed reports, proposed/applied, evaluated/resolved, top-1 accuracy and top-3 recall over cases with localization, grounding rate, unauthorized writes, tool calls). Unmeasured metrics stay null.
+- Baselines: `compare` flags a regression when a higher-is-better metric drops or unauthorized writes rise. Exit codes: 2 on any unauthorized write (always), 1 on a regression with `--fail-on-regression`. Baselines are stored as summary-only files (`evals/baselines/<mode>.json`) and promoted from produced reports with `scripts/promote_baseline.py`. Regenerate the stub baseline after an intended behaviour change with `make regression-baseline`.
+- Unauthorized writes: any workspace change not in an approved and applied patch's `affected_files` (`git status` of the workspace, including untracked files).
+- Live localization is computed by `reference_localization` (evaluator side) only after a case finishes.
+- New make targets: `regression` (writes `var/evals/regression.json`), `regression-baseline`, `agent-eval` (`ARGS=...`).
+- `REGRESSION_REPORT_PATH` (env) makes the regression suite write its JSON report.
+
 ## Notes
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 010 — Regression evals + CI
+TASK 011 — Vertex AI + Cloud Run

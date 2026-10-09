@@ -30,6 +30,13 @@ async def fetch_data():
     return compute_total([1, 2])
 '''
 
+
+@pytest.fixture(autouse=True)
+def _no_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never see a real model key (CI has none; a developer shell might)."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
 CORE_V2 = CORE_V1.replace("sum(items) + 1  # BUG: off by one", "sum(items)")
 
 

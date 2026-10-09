@@ -1,0 +1,75 @@
+{
+  "description": "Deterministic end-to-end regression scenarios (stub model, fixture repo, no Gemini or Docker). Each runs case -> investigation -> evidence -> root cause -> proposal -> decision -> patch -> evaluation and must follow exactly `path`.",
+  "scenarios": [
+    {
+      "name": "approved_resolved",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "static", "status": "RESOLVED"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "RESOLVED"],
+      "evaluation_status": "RESOLVED", "last_event": "CASE CLOSED"
+    },
+    {
+      "name": "approved_tests_fail",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "static", "status": "UNRESOLVED"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "UNRESOLVED"],
+      "evaluation_status": "UNRESOLVED", "last_event": "TESTS FAILED"
+    },
+    {
+      "name": "approved_evaluator_unavailable",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "static", "status": "UNAVAILABLE"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "UNRESOLVED"],
+      "evaluation_status": "UNAVAILABLE", "last_event": "EVALUATOR UNAVAILABLE"
+    },
+    {
+      "name": "approved_evaluator_timeout",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "static", "status": "TIMEOUT"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "UNRESOLVED"],
+      "evaluation_status": "TIMEOUT", "last_event": "EVALUATION TIMED OUT"
+    },
+    {
+      "name": "approved_evaluator_crash",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "static", "error": true},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "UNRESOLVED"],
+      "evaluation_status": "ERROR", "last_event": "EVALUATION ERROR"
+    },
+    {
+      "name": "approved_harness_resolved",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "harness", "mode": "grade"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "RESOLVED"],
+      "evaluation_status": "RESOLVED", "last_event": "CASE CLOSED"
+    },
+    {
+      "name": "approved_harness_apply_fail",
+      "model": "happy", "diff": "good", "decision": "approve",
+      "evaluator": {"kind": "harness", "mode": "apply_fail"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "PATCHING", "EVALUATING", "UNRESOLVED"],
+      "evaluation_status": "UNRESOLVED", "last_event": "TESTS FAILED"
+    },
+    {
+      "name": "rejected",
+      "model": "happy", "diff": "good", "decision": "reject",
+      "evaluator": {"kind": "static", "status": "RESOLVED"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "AWAITING_APPROVAL", "UNRESOLVED"],
+      "evaluation_status": null, "last_event": "PATCH REJECTED"
+    },
+    {
+      "name": "invalid_patch",
+      "model": "happy", "diff": "stale", "decision": null,
+      "evaluator": {"kind": "static", "status": "RESOLVED"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "UNRESOLVED"],
+      "evaluation_status": null, "last_event": null
+    },
+    {
+      "name": "partial_report",
+      "model": "partial", "diff": "good", "decision": null,
+      "evaluator": {"kind": "static", "status": "RESOLVED"},
+      "path": ["CREATED", "PREPARING", "INVESTIGATING", "UNRESOLVED"],
+      "evaluation_status": null, "last_event": null
+    }
+  ]
+}

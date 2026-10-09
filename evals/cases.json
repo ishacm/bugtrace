@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "description": "Live agent-evaluation set (workflow_dispatch only). Safe identifiers only; reference data stays evaluator-side.",
+  "cases": [
+    {"instance_id": "astropy__astropy-12907"},
+    {"instance_id": "astropy__astropy-13033"},
+    {"instance_id": "astropy__astropy-13453"}
+  ]
+}

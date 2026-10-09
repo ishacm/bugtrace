@@ -1,0 +1,116 @@
+# Manually triggered, potentially expensive evaluation. Never runs on push.
+#  - swebench-integration: the opt-in real SWE-bench harness test (Docker, network; no secrets).
+#  - agent-eval: live agent over evals/cases.json (needs the GEMINI_API_KEY secret).
+name: Agent evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_swebench_integration:
+        description: Run the Docker-backed SWE-bench integration test
+        type: boolean
+        default: true
+      run_agent_eval:
+        description: Run the live agent evaluation (uses Gemini quota)
+        type: boolean
+        default: false
+      manifest:
+        description: Case manifest (safe identifiers only)
+        type: string
+        default: evals/cases.json
+      approve_patches:
+        description: >-
+          Explicit human approval for this run: apply each proposed patch in its own
+          throwaway workspace and grade it with SWE-bench (Docker)
+        type: boolean
+        default: false
+      fail_on_regression:
+        description: Fail when metrics regress against evals/baselines/live.json
+        type: boolean
+        default: false
+      model_name:
+        description: Gemini model name (defaults to the BUGTRACE_MODEL_NAME repository variable)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-eval
+  cancel-in-progress: false
+
+jobs:
+  swebench-integration:
+    name: SWE-bench integration (Docker)
+    if: ${{ inputs.run_swebench_integration }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Check Docker
+        run: docker info --format '{{.ServerVersion}}'
+
+      - name: Real-case harness test (oracle patch)
+        run: make eval-integration
+
+  agent-eval:
+    name: Live agent evaluation
+    if: ${{ inputs.run_agent_eval }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      BUGTRACE_ENV: production
+      MANIFEST: ${{ inputs.manifest }}
+      APPROVE_PATCHES: ${{ inputs.approve_patches }}
+      FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression }}
+      BUGTRACE_MODEL_NAME: ${{ inputs.model_name || vars.BUGTRACE_MODEL_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked
+
+      - name: Check configuration (never prints the key)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "${GEMINI_API_KEY}" ]; then
+            echo "::error::Repository secret GEMINI_API_KEY is not configured."
+            exit 1
+          fi
+          if [ -z "${BUGTRACE_MODEL_NAME}" ]; then
+            echo "::error::Set the model_name input or the BUGTRACE_MODEL_NAME repository variable."
+            exit 1
+          fi
+
+      - name: Run agent evaluation
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          args=(--manifest "${MANIFEST}" --output var/evals/agent-eval.json)
+          if [ "${APPROVE_PATCHES}" = "true" ]; then args+=(--approve-patches); fi
+          if [ "${FAIL_ON_REGRESSION}" = "true" ]; then args+=(--fail-on-regression); fi
+          uv run python scripts/agent_eval.py "${args[@]}"
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-report
+          path: |
+            var/evals/agent-eval.json
+            var/investigations/
+          if-no-files-found: warn
