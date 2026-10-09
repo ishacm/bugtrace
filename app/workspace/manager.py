@@ -109,6 +109,23 @@ class WorkspaceManager:
         self._assert_isolated(repo)
         return self._git(repo, "rev-parse", "HEAD", timeout=30)
 
+    def changed_files(self, investigation_id: str) -> list[str]:
+        """Paths modified, added or deleted in the workspace tree (incl. untracked)."""
+        repo = self.repo_dir(investigation_id)
+        self._assert_isolated(repo)
+        out = run_git(
+            repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", timeout=60
+        ).stdout
+        entries = iter(out.split("\0"))
+        files: list[str] = []
+        for entry in entries:
+            if len(entry) < 4:
+                continue
+            files.append(entry[3:])
+            if entry[0] in "RC":  # renames/copies carry the source path next
+                files.append(next(entries, ""))
+        return sorted(f for f in set(files) if f)
+
     def prepare(
         self, investigation_id: str, case: PublicCase, remote_url: str | None = None
     ) -> Workspace:

@@ -29,6 +29,7 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["integration: opt-in real SWE-bench evaluation (SWEBENCH_INTEGRATION=1)"]
 
 [tool.ruff]
 line-length = 100

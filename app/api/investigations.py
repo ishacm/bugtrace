@@ -19,6 +19,7 @@ from app.agent.models import (
     Suspect,
 )
 from app.data.models import PublicCase
+from app.evaluation.models import EvaluationResult
 from app.services.investigations import CaseNotFoundError, InvestigationService
 from app.storage.models import (
     Approval,
@@ -74,6 +75,7 @@ class InvestigationResponse(BaseModel):
     patch_error: str | None = None
     approval: Approval | None = None
     patch_result: PatchResult | None = None
+    evaluation: EvaluationResult | None = None  # gold-free SWE-bench verdict and metrics
     events: list[AgentEvent] = Field(default_factory=list)
 
     @classmethod
@@ -87,6 +89,7 @@ class InvestigationResponse(BaseModel):
             updated_at=stored.updated_at,
             error=stored.error,
             approval=stored.approval,
+            evaluation=stored.evaluation,
             events=stored.events,
         )
         record = stored.record

@@ -12,7 +12,13 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from app.agent.patches import InvalidPatchError, ParsedPatch, parse_unified_diff, patch_sha256
+from app.agent.patches import (
+    InvalidPatchError,
+    ParsedPatch,
+    check_hunk_reaches_eof,
+    parse_unified_diff,
+    patch_sha256,
+)
 from app.mcp_servers.models import (
     DEFAULT_SEARCH_RESULTS,
     MAX_LIST_ENTRIES,
@@ -53,9 +59,10 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _REF_RE = re.compile(r"^(?:[0-9a-f]{4,40}|HEAD)(?:[~^][0-9]{0,3})*$")
 _TEST_DIR_NAMES = {"test", "tests", "testing"}
 # Shared by `git apply --check` and the privileged apply so both judge a patch alike.
-# --unidiff-zero: hunks without trailing context are not forced to match at end of
-# file (model-written diffs often omit it); context and removed lines must still match.
-GIT_APPLY_OPTIONS = ("--whitespace=nowarn", "--unidiff-zero")
+# No --unidiff-zero: git keeps its default anchoring (hunks with no trailing context
+# must match at end of file, hunks at line 1 at the start), and the validator
+# requires standard context around every change.
+GIT_APPLY_OPTIONS = ("--whitespace=nowarn",)
 
 
 class ToolFailure(Exception):
@@ -380,10 +387,19 @@ class RepoTools:
             parsed = parse_unified_diff(diff)
         except InvalidPatchError as exc:
             raise ToolFailure(ToolErrorCode.PATCH_REJECTED, str(exc)) from exc
+        line_counts: dict[str, int] = {}
         for path in parsed.files:
             resolved, _ = self._resolve(path)  # also rejects symlink escapes
             if not resolved.is_file() or resolved.is_symlink():
                 raise ToolFailure(ToolErrorCode.NOT_FOUND, f"patch targets missing file {path!r}")
+            if resolved.stat().st_size > MAX_FILE_BYTES:
+                raise ToolFailure(ToolErrorCode.TOO_LARGE, f"patch target too large: {path!r}")
+            line_counts[path] = len(resolved.read_bytes().splitlines())
+        try:
+            for hunk in parsed.hunks:
+                check_hunk_reaches_eof(hunk, line_counts[hunk.path])
+        except InvalidPatchError as exc:
+            raise ToolFailure(ToolErrorCode.PATCH_REJECTED, str(exc)) from exc
         # The patch file lives outside the repository; --check reads but never writes.
         with tempfile.TemporaryDirectory(prefix="bugtrace-check-") as tmp:
             patch_file = Path(tmp) / "check.diff"

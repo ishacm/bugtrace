@@ -2,18 +2,22 @@
 
 import ast
 import json
+import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.config import Settings, get_settings
 from app.data import swebench
 from app.data.models import PUBLIC_CASE_FIELDS, PublicCase
 from app.data.store import read_cases, write_cases
 from app.evaluation.gold import gold_case_from_row
+from app.evaluation.models import EvaluationRequest, EvaluationResult
 from app.main import create_app
+from app.workspace.runner import run_command
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLD_KEYS = {
@@ -140,14 +144,61 @@ def _imported_modules(path: Path) -> set[str]:
     return modules
 
 
+# Outside app/evaluation, only the gold-free result models may be imported, plus the
+# evaluator entry points by the service layer that runs evaluation after approval.
+GOLD_FREE_EVALUATION_MODULES = {"app.evaluation.models"}
+EVALUATION_ENTRY_POINTS = {"app.evaluation.evaluator", "app.evaluation.metrics"}
+EVALUATION_RUNNERS = {ROOT / "app" / "services" / "investigations.py", ROOT / "app" / "main.py"}
+
+
 def test_only_evaluation_package_imports_gold_models() -> None:
     offenders = []
     for path in (ROOT / "app").rglob("*.py"):
         if (ROOT / "app" / "evaluation") in path.parents:
             continue
-        if any(m.startswith("app.evaluation") for m in _imported_modules(path)):
-            offenders.append(str(path.relative_to(ROOT)))
+        for module in _imported_modules(path):
+            if not module.startswith("app.evaluation") or module in GOLD_FREE_EVALUATION_MODULES:
+                continue
+            if module in EVALUATION_ENTRY_POINTS and path in EVALUATION_RUNNERS:
+                continue
+            offenders.append(f"{path.relative_to(ROOT)} -> {module}")
     assert offenders == []
+
+
+def test_agent_and_tool_layers_never_import_evaluation() -> None:
+    offenders = []
+    for package in ("agent", "mcp_servers", "workspace", "data"):
+        for path in (ROOT / "app" / package).rglob("*.py"):
+            if any(m.startswith("app.evaluation") for m in _imported_modules(path)):
+                offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == []
+
+
+def test_agent_and_tool_processes_never_load_reference_data() -> None:
+    """Importing the agent and both MCP servers loads no gold/evaluator code (transitively)."""
+    probe = (
+        "import sys\n"
+        "import app.agent.graph, app.agent.runner\n"
+        "import app.mcp_servers.repo_server, app.mcp_servers.patch_server\n"
+        "print(sorted(m for m in sys.modules"
+        " if m.startswith('app.evaluation') or m == 'app.data.source'))"
+    )
+    result = run_command([sys.executable, "-c", probe], cwd=ROOT, timeout=60)
+    assert result.stdout.strip() == "['app.evaluation', 'app.evaluation.models']"
+
+
+def test_evaluation_result_models_have_no_gold_fields() -> None:
+    def field_names(model: type[BaseModel]) -> set[str]:
+        names = set(model.model_fields)
+        for field in model.model_fields.values():
+            for arg in (field.annotation, *get_args(field.annotation)):
+                if isinstance(arg, type) and issubclass(arg, BaseModel):
+                    names |= field_names(arg)
+        return names
+
+    for model in (EvaluationResult, EvaluationRequest):
+        assert not GOLD_KEYS & field_names(model)
+    assert "app.evaluation.gold" not in _imported_modules(ROOT / "app" / "evaluation" / "models.py")
 
 
 def test_agent_layer_does_not_touch_raw_dataset_source() -> None:

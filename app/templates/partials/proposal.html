@@ -15,9 +15,10 @@
   {% if inv.status == "AWAITING_APPROVAL" %}
   <div class="decision">
     <p class="muted">Nothing has been applied. Approving applies exactly this diff inside the
-      investigation workspace; it is never committed or pushed.</p>
+      investigation workspace (never committed or pushed), then grades it with the SWE-bench
+      tests in an isolated container.</p>
     <div class="decision-buttons">
-      <button type="button" class="btn" data-decision="approve">Approve &amp; apply</button>
+      <button type="button" class="btn" data-decision="approve">Approve &amp; test</button>
       <button type="button" class="btn btn-quiet" data-decision="reject">Reject</button>
     </div>
   </div>

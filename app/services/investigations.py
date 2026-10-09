@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,6 +22,15 @@ from app.agent.tools import PatchApplier, RepoToolClient
 from app.config import Settings
 from app.data.models import PublicCase
 from app.data.store import read_cases
+from app.evaluation.evaluator import (
+    EvaluationRefusedError,
+    Evaluator,
+    SwebenchEvaluator,
+    build_request,
+    failed_result,
+)
+from app.evaluation.metrics import trace_metrics
+from app.evaluation.models import EvaluationResult, EvaluationStatus
 from app.mcp_servers.client import PatchMCPClient, RepoMCPClient
 from app.storage.models import (
     RUNNING_STATUSES,
@@ -53,6 +63,8 @@ class InvestigationBackend(Protocol):
 
     def patch_client(self, investigation_id: str) -> AbstractAsyncContextManager[PatchApplier]: ...
 
+    async def changed_files(self, investigation_id: str) -> list[str]: ...
+
 
 class LocalBackend:
     """Real backend: git workspace + stdio MCP repo server + configured model."""
@@ -80,6 +92,9 @@ class LocalBackend:
         async with PatchMCPClient.connect(investigation_id, self.workspaces, database) as client:
             yield client
 
+    async def changed_files(self, investigation_id: str) -> list[str]:
+        return await asyncio.to_thread(self.manager.changed_files, investigation_id)
+
 
 class InvestigationService:
     def __init__(
@@ -91,6 +106,7 @@ class InvestigationService:
         max_iterations: int,
         max_tool_calls: int,
         checkpoint_path: Path,
+        evaluator: Evaluator,
         max_patch_attempts: int = 2,
     ) -> None:
         self.store = store
@@ -100,11 +116,15 @@ class InvestigationService:
         self.max_tool_calls = max_tool_calls
         self.checkpoint_path = checkpoint_path
         self.max_patch_attempts = max_patch_attempts
+        self.evaluator = evaluator
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     @classmethod
     def from_settings(
-        cls, settings: Settings, backend: InvestigationBackend | None = None
+        cls,
+        settings: Settings,
+        backend: InvestigationBackend | None = None,
+        evaluator: Evaluator | None = None,
     ) -> "InvestigationService":
         return cls(
             store=InvestigationStore(settings.database_path),
@@ -113,6 +133,7 @@ class InvestigationService:
             max_iterations=settings.agent_max_iterations,
             max_tool_calls=settings.agent_max_tool_calls,
             checkpoint_path=settings.checkpoint_path,
+            evaluator=evaluator or SwebenchEvaluator.from_settings(settings),
             max_patch_attempts=settings.agent_max_patch_attempts,
         )
 
@@ -275,16 +296,83 @@ class InvestigationService:
                     on_update=self._persist,
                 )
             self.store.save_record(to_record(state))
-            if approve:
-                # Applied (or refused) without evaluation; TASK 009 adds EVALUATING.
+            if not approve:
+                return
+            result = state.get("patch_result")
+            if result is None or not result.applied:
+                # Nothing was applied, so there is nothing to evaluate.
                 self.store.transition(investigation_id, S.UNRESOLVED)
+                return
+            await self._evaluate(investigation_id)
         except InvalidTransitionError as exc:
             logger.info("investigation %s stopped: %s", investigation_id, exc)
         except Exception as exc:
             logger.exception("investigation %s failed after decision", investigation_id)
             self._fail(investigation_id, f"{type(exc).__name__}: {exc}")
 
+    async def _evaluate(self, investigation_id: str) -> None:
+        """Grade the applied patch with the SWE-bench evaluator and close the case.
+
+        Only the gold-free result is persisted; nothing flows back into agent state."""
+        stored = self.store.transition(
+            investigation_id,
+            S.EVALUATING,
+            event=AgentEvent(
+                type="evaluation_started",
+                title="EVALUATION STARTED",
+                message="Running the SWE-bench tests against the applied patch "
+                "in an isolated container.",
+            ),
+        )
+        try:
+            request = build_request(stored, await self.backend.changed_files(investigation_id))
+        except EvaluationRefusedError as exc:
+            self._fail(investigation_id, f"evaluation refused: {exc}")
+            return
+        started = datetime.now(UTC)
+        try:
+            result = await self.evaluator.evaluate(request)
+        except Exception as exc:
+            logger.exception("evaluation of %s failed", investigation_id)
+            result = failed_result(
+                request,
+                EvaluationStatus.ERROR,
+                "INTERNAL_ERROR",
+                f"The evaluator failed unexpectedly ({type(exc).__name__}).",
+                started,
+            )
+        result = result.model_copy(update={"trace": trace_metrics(stored)})
+        self.store.record_evaluation(investigation_id, result, event=_evaluation_event(result))
+
     def _fail(self, investigation_id: str, message: str) -> None:
         event = AgentEvent(type="error", title="INVESTIGATION FAILED", message=message)
         with suppress(InvalidTransitionError):
             self.store.transition(investigation_id, S.FAILED, error=message, event=event)
+
+
+_EVALUATION_TITLES = {
+    EvaluationStatus.RESOLVED: "CASE CLOSED",
+    EvaluationStatus.UNRESOLVED: "TESTS FAILED",
+    EvaluationStatus.ERROR: "EVALUATION ERROR",
+    EvaluationStatus.TIMEOUT: "EVALUATION TIMED OUT",
+    EvaluationStatus.UNAVAILABLE: "EVALUATOR UNAVAILABLE",
+}
+
+
+def _evaluation_event(result: EvaluationResult) -> AgentEvent:
+    message = result.message
+    if result.target_tests is not None:
+        target = result.target_tests
+        message += f" Target tests: {target.passed}/{target.passed + target.failed} passing."
+    if result.regression_tests is not None:
+        regression = result.regression_tests
+        message += (
+            f" Regression tests: {regression.passed}/"
+            f"{regression.passed + regression.failed} passing."
+        )
+    return AgentEvent(
+        type="case_closed" if result.status == EvaluationStatus.RESOLVED else "evaluation_finished",
+        title=_EVALUATION_TITLES[result.status],
+        message=message,
+        metadata={"evaluation_status": result.status.value},
+    )

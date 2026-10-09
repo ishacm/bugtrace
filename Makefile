@@ -1,4 +1,4 @@
-.PHONY: setup doctor dev seed workspace investigate test lint format
+.PHONY: setup doctor dev seed workspace investigate test eval-integration lint format
 
 setup:
 	uv sync
@@ -20,6 +20,10 @@ investigate:
 
 test:
 	uv run pytest
+
+# Real SWE-bench case: needs network; the harness test also needs Docker.
+eval-integration:
+	SWEBENCH_INTEGRATION=1 uv run pytest -m integration tests/test_evaluation_integration.py
 
 lint:
 	uv run ruff check .

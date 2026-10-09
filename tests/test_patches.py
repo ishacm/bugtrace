@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.agent.models import AgentEvent, PatchDraft
+from app.agent.models import AgentEvent, PatchDraft, ProposedPatch
 from app.agent.patches import InvalidPatchError, parse_unified_diff, patch_sha256
-from app.agent.runner import checkpoint_serde, run_investigation, to_record
+from app.agent.runner import InvestigationRecord, checkpoint_serde, run_investigation, to_record
 from app.config import Settings
 from app.data.models import PublicCase
 from app.data.store import write_cases
@@ -22,7 +23,7 @@ from app.main import create_app
 from app.mcp_servers.client import PatchMCPClient
 from app.mcp_servers.models import ToolErrorCode
 from app.mcp_servers.patch_tools import PatchTools
-from app.mcp_servers.repo_tools import RepoTools
+from app.mcp_servers.repo_tools import GIT_APPLY_OPTIONS, RepoTools
 from app.storage.models import (
     TERMINAL_STATUSES,
     ApprovalDecision,
@@ -33,18 +34,91 @@ from app.storage.sqlite import InvestigationStore
 from app.workspace.manager import WorkspaceManager, run_git
 from tests.conftest import CORE_V1
 from tests.test_agent import CASE_STATEMENT, FakeModel, LocalRepoClient, _happy_model, _ids
-from tests.test_investigations_api import INSTANCE_ID, FakeBackend, _assert_no_gold, _wait_for
+from tests.test_investigations_api import (
+    INSTANCE_ID,
+    FakeBackend,
+    StaticEvaluator,
+    _assert_no_gold,
+    _wait_for,
+)
 
 S = InvestigationStatus
 ROOT = Path(__file__).resolve().parent.parent
 FIX_LINE = "    return sum(items)"
-GOOD_DIFF = """--- a/pkg/core.py
-+++ b/pkg/core.py
-@@ -12,2 +12,2 @@
- def compute_total(items):
--    return sum(items) + 1  # BUG: off by one
-+    return sum(items)
-"""
+BUG_LINE = "    return sum(items) + 1  # BUG: off by one"
+
+
+def _diff(header: str, body: list[str], path: str = "pkg/core.py") -> str:
+    return "\n".join([f"--- a/{path}", f"+++ b/{path}", header, *body]) + "\n"
+
+
+# Standard 3-line context on both sides of the change (core.py lines 10-16).
+GOOD_DIFF = _diff(
+    "@@ -10,7 +10,7 @@",
+    [
+        " ",
+        " ",
+        " def compute_total(items):",
+        f"-{BUG_LINE}",
+        f"+{FIX_LINE}",
+        " ",
+        " ",
+        " async def fetch_data():",
+    ],
+)
+# Change at line 1: leading context is legitimately empty.
+START_DIFF = _diff(
+    "@@ -1,4 +1,4 @@",
+    [
+        '-"""Core widgets."""',
+        '+"""Core widgets (fixed)."""',
+        " ",
+        " DEFAULT_LIMIT = 10",
+        " limit_hint: int = 3",
+    ],
+)
+# Change at the last line (17): trailing context is legitimately empty.
+END_DIFF = _diff(
+    "@@ -14,4 +14,4 @@",
+    [
+        " ",
+        " ",
+        " async def fetch_data():",
+        "-    return compute_total([1, 2])",
+        "+    return compute_total([1, 2, 3])",
+    ],
+)
+# Add-only, but anchored by 3 context lines on each side.
+ANCHORED_INSERT_DIFF = _diff(
+    "@@ -11,6 +11,7 @@",
+    [
+        " ",
+        " def compute_total(items):",
+        f" {BUG_LINE}",
+        "+    # reviewed",
+        " ",
+        " ",
+        " async def fetch_data():",
+    ],
+)
+ZERO_CONTEXT_DIFF = _diff("@@ -13 +13 @@", [f"-{BUG_LINE}", f"+{FIX_LINE}"])
+UNANCHORED_ADD_DIFF = _diff("@@ -13,0 +14,1 @@", ["+    pass"])
+SHORT_LEADING_DIFF = _diff(
+    "@@ -11,6 +11,6 @@",
+    [
+        " ",
+        " def compute_total(items):",
+        f"-{BUG_LINE}",
+        f"+{FIX_LINE}",
+        " ",
+        " ",
+        " async def fetch_data():",
+    ],
+)
+# No trailing context although line 13 is not the end of the file.
+NO_TRAILING_DIFF = _diff(
+    "@@ -10,4 +10,4 @@", [" ", " ", " def compute_total(items):", f"-{BUG_LINE}", f"+{FIX_LINE}"]
+)
 # Well-formed, but its context does not match the file: `git apply --check` fails.
 STALE_DIFF = GOOD_DIFF.replace(" def compute_total(items):", " def compute_totals(items):")
 INVENTED_FILE_DIFF = GOOD_DIFF.replace("pkg/core.py", "pkg/invented.py")
@@ -102,9 +176,15 @@ def _backend(penv: dict[str, Any], diff: str = GOOD_DIFF, **kwargs: Any) -> Fake
     )
 
 
+def _app(penv: dict[str, Any], backend: FakeBackend, evaluator: Any = None) -> FastAPI:
+    return create_app(
+        settings=penv["settings"], backend=backend, evaluator=evaluator or StaticEvaluator()
+    )
+
+
 @pytest.fixture
 def pclient(penv: dict[str, Any]) -> Iterator[TestClient]:
-    with TestClient(create_app(settings=penv["settings"], backend=_backend(penv))) as client:
+    with TestClient(_app(penv, _backend(penv))) as client:
         yield client
 
 
@@ -159,16 +239,11 @@ def test_parse_valid_diff_and_normalize_blank_context() -> None:
     assert (parsed.added, parsed.removed) == (1, 1)
     assert parsed.diff == GOOD_DIFF
 
-    blank_context = (
-        "diff --git a/pkg/core.py b/pkg/core.py\n"
-        "index 1111111..2222222 100644\n"
-        "--- a/pkg/core.py\t2024-01-01\n+++ b/pkg/core.py\n"
-        "@@ -11,3 +11,3 @@\n\n def compute_total(items):\n"
-        "-    return sum(items) + 1  # BUG: off by one\n+    return sum(items)\n"
-    )
-    normalized = parse_unified_diff(blank_context)
-    assert "\n \n def compute_total" in normalized.diff
-    assert "--- a/pkg/core.py\n" in normalized.diff
+    git_headers = "diff --git a/pkg/core.py b/pkg/core.py\nindex 1111111..2222222 100644\n"
+    blank_context = git_headers + GOOD_DIFF.replace("--- a/pkg/core.py", "--- a/pkg/core.py\t2024")
+    blank_context = "\n".join("" if line == " " else line for line in blank_context.split("\n"))
+    assert "\n\n def compute_total" in blank_context
+    assert parse_unified_diff(blank_context).diff == git_headers + GOOD_DIFF
 
 
 @pytest.mark.parametrize(
@@ -177,9 +252,12 @@ def test_parse_valid_diff_and_normalize_blank_context() -> None:
         ("", "empty"),
         ("not a diff at all\n", "unexpected line"),
         ("--- a/pkg/core.py\n+++ b/pkg/core.py\n", "no hunks"),
-        (GOOD_DIFF.replace("@@ -12,2 +12,2 @@", "@@ -12,3 +12,2 @@"), "shorter"),
-        (GOOD_DIFF.replace("@@ -12,2 +12,2 @@", "@@ -12,1 +12,1 @@"), "longer"),
-        (GOOD_DIFF.replace("@@ -12,2 +12,2 @@", "@@ -x +y @@"), "malformed hunk"),
+        (GOOD_DIFF.replace("@@ -10,7 +10,7 @@", "@@ -10,8 +10,7 @@"), "shorter"),
+        (GOOD_DIFF.replace("@@ -10,7 +10,7 @@", "@@ -10,6 +10,6 @@"), "longer"),
+        (GOOD_DIFF.replace("@@ -10,7 +10,7 @@", "@@ -x +y @@"), "malformed hunk"),
+        (ZERO_CONTEXT_DIFF, "0 context line\\(s\\) before"),
+        (SHORT_LEADING_DIFF, "2 context line\\(s\\) before"),
+        (UNANCHORED_ADD_DIFF, "add-only hunk"),
         (GOOD_DIFF.replace("pkg/core.py", "../outside.py"), "escapes"),
         (GOOD_DIFF.replace("a/pkg/core.py", "a//etc/passwd").replace("b/pkg", "b//etc"), "escapes"),
         (GOOD_DIFF.replace("pkg/core.py", ".git/config"), "may not touch"),
@@ -289,7 +367,7 @@ def test_completed_root_cause_proposes_patch_and_waits(pclient: TestClient) -> N
 )
 def test_invalid_patch_is_rejected_safely(penv: dict[str, Any], diff: str, reason: str) -> None:
     backend = _backend(penv, diff)
-    with TestClient(create_app(settings=penv["settings"], backend=backend)) as client:
+    with TestClient(_app(penv, backend)) as client:
         inv = _start(client)
         body = _wait_for(client, inv, TERMINAL_STATUSES)
 
@@ -316,7 +394,7 @@ def test_partial_report_does_not_propose_patch(penv: dict[str, Any]) -> None:
         database_path=penv["settings"].database_path,
         model_factory=no_root_cause,
     )
-    with TestClient(create_app(settings=penv["settings"], backend=backend)) as client:
+    with TestClient(_app(penv, backend)) as client:
         inv = _start(client)
         body = _wait_for(client, inv, TERMINAL_STATUSES)
         assert body["report"]["status"] == "PARTIAL"
@@ -370,12 +448,13 @@ def test_approve_applies_patch_inside_workspace_only(pclient: TestClient) -> Non
     assert response.json()["status"] == "PATCHING"
     body = _wait_for(pclient, inv, TERMINAL_STATUSES)
 
-    assert body["status"] == "UNRESOLVED", body["error"]
+    # Applied -> EVALUATING -> the (static) evaluator's verdict closes the case.
+    assert body["status"] == "RESOLVED", body["error"]
     result = body["patch_result"]
     assert result["applied"] is True and result["files"] == ["pkg/core.py"]
     assert "-    return sum(items) + 1" in result["diff"] and f"+{FIX_LINE}" in result["diff"]
     types = [e["type"] for e in body["events"]]
-    assert types[-2:] == ["patch_approved", "patch_applied"]
+    assert types[-4:] == ["patch_approved", "patch_applied", "evaluation_started", "case_closed"]
 
     assert FIX_LINE + "\n" in (repo / "pkg/core.py").read_text()
     assert _git(repo, "status", "--porcelain") == " M pkg/core.py\n"
@@ -386,7 +465,7 @@ def test_approve_applies_patch_inside_workspace_only(pclient: TestClient) -> Non
 
 def test_decision_in_wrong_state_returns_409(penv: dict[str, Any]) -> None:
     backend = _backend(penv, prepare_delay=3600)
-    with TestClient(create_app(settings=penv["settings"], backend=backend)) as client:
+    with TestClient(_app(penv, backend)) as client:
         inv = _start(client)
         assert _decide(client, inv, "approve").status_code == 409  # PREPARING
         client.post(f"/api/investigations/{inv}/cancel")
@@ -418,10 +497,10 @@ def test_store_decision_requires_proposed_patch(penv: dict[str, Any]) -> None:
 
 
 def test_approval_state_survives_restart(penv: dict[str, Any]) -> None:
-    with TestClient(create_app(settings=penv["settings"], backend=_backend(penv))) as client:
+    with TestClient(_app(penv, _backend(penv))) as client:
         inv, before = _awaiting(client)
 
-    with TestClient(create_app(settings=penv["settings"], backend=_backend(penv))) as client:
+    with TestClient(_app(penv, _backend(penv))) as client:
         after = client.get(f"/api/investigations/{inv}").json()
         assert after["status"] == "AWAITING_APPROVAL"
         assert after["proposed_patch"] == before["proposed_patch"]
@@ -439,7 +518,7 @@ def test_approval_state_survives_restart(penv: dict[str, Any]) -> None:
 
 
 def _paused(penv: dict[str, Any]) -> tuple[str, PatchTools, Path, InvestigationStore]:
-    with TestClient(create_app(settings=penv["settings"], backend=_backend(penv))) as client:
+    with TestClient(_app(penv, _backend(penv))) as client:
         inv, _ = _awaiting(client)
         manager = client.app.state.investigations.backend.manager  # type: ignore[attr-defined]
     store = InvestigationStore(penv["settings"].database_path)
@@ -532,7 +611,7 @@ def test_checkpoint_state_round_trips_without_unregistered_types(
 
 
 def test_page_shows_patch_controls_and_outcomes(penv: dict[str, Any]) -> None:
-    with TestClient(create_app(settings=penv["settings"], backend=_backend(penv))) as client:
+    with TestClient(_app(penv, _backend(penv))) as client:
         first, _ = _awaiting(client)
         page = client.get(f"/investigations/{first}").text
         assert "AWAITING APPROVAL" in page
@@ -555,9 +634,126 @@ def test_page_shows_patch_controls_and_outcomes(penv: dict[str, Any]) -> None:
 
 def test_page_shows_why_no_patch_was_proposed(penv: dict[str, Any]) -> None:
     backend = _backend(penv, STALE_DIFF)
-    with TestClient(create_app(settings=penv["settings"], backend=backend)) as client:
+    with TestClient(_app(penv, backend)) as client:
         inv = _start(client)
         _wait_for(client, inv, TERMINAL_STATUSES)
         page = client.get(f"/investigations/{inv}").text
         assert "No valid patch was proposed" in page
         assert "data-decision" not in page
+
+
+# --- context enforcement with default git anchoring ----------------------------------------
+
+
+def test_git_apply_runs_without_unidiff_zero() -> None:
+    assert "--unidiff-zero" not in GIT_APPLY_OPTIONS
+
+
+def _approve_in_store(store: InvestigationStore, inv: str, case: PublicCase, diff: str) -> None:
+    store.create(inv, case)
+    for target in (S.PREPARING, S.INVESTIGATING, S.AWAITING_APPROVAL):
+        store.transition(inv, target)
+    parsed = parse_unified_diff(diff)
+    sha = patch_sha256(parsed.diff)
+    patch = ProposedPatch(
+        patch_id=f"patch-{sha[:12]}",
+        sha256=sha,
+        attempt=1,
+        summary="s",
+        rationale="r",
+        diff=parsed.diff,
+        affected_files=parsed.files,
+        evidence_ids=["ev-000000000001"],
+        added_lines=parsed.added,
+        removed_lines=parsed.removed,
+    )
+    record = InvestigationRecord(
+        investigation_id=inv,
+        case=case,
+        analysis=None,
+        plan=None,
+        evidence=[],
+        suspects=[],
+        hypotheses=[],
+        searches_performed=[],
+        files_inspected=[],
+        tool_call_count=0,
+        iteration=1,
+        limits_reached=[],
+        errors=[],
+        events=[],
+        final_report=None,
+        proposed_patch=patch,
+    )
+    store.save_record(record)
+    event = AgentEvent(type="patch_approved", title="x", message="x")
+    store.record_decision(inv, ApprovalDecision.APPROVE, event=event)
+
+
+@pytest.mark.parametrize(
+    ("diff", "expected"),
+    [
+        (GOOD_DIFF, f"def compute_total(items):\n{FIX_LINE}\n\n"),
+        (START_DIFF, '"""Core widgets (fixed)."""\n\nDEFAULT_LIMIT'),
+        (END_DIFF, "    return compute_total([1, 2, 3])\n"),
+        (ANCHORED_INSERT_DIFF, f"{BUG_LINE}\n    # reviewed\n\n"),
+    ],
+    ids=["three-line-context", "file-start", "file-end", "anchored-insert"],
+)
+def test_context_patches_check_and_apply(
+    workspace: tuple[WorkspaceManager, str, Path], tmp_path: Path, diff: str, expected: str
+) -> None:
+    manager, inv, repo = workspace
+    check = RepoTools.for_investigation(manager, inv).check_patch(diff)
+    assert check.ok, check.error
+    assert _git(repo, "status", "--porcelain") == ""
+
+    store = InvestigationStore(tmp_path / "apply.db")
+    case = PublicCase(
+        instance_id=INSTANCE_ID,
+        repo="o/f",
+        problem_statement="x",
+        base_commit=_git(repo, "rev-parse", "HEAD").strip(),
+    )
+    _approve_in_store(store, inv, case, diff)
+    result = PatchTools.for_investigation(manager, store, inv).apply_patch()
+
+    assert result.ok and result.applied, result.error
+    assert expected in (repo / "pkg/core.py").read_text()
+    assert _git(repo, "status", "--porcelain") == " M pkg/core.py\n"
+
+
+def test_short_trailing_context_must_reach_end_of_file(
+    workspace: tuple[WorkspaceManager, str, Path],
+) -> None:
+    manager, inv, repo = workspace
+    parsed = parse_unified_diff(NO_TRAILING_DIFF)  # structurally fine; needs the file length
+    assert parsed.hunks[0].ends_at_eof
+
+    result = RepoTools.for_investigation(manager, inv).check_patch(NO_TRAILING_DIFF)
+    assert not result.ok and result.error.code == ToolErrorCode.PATCH_REJECTED
+    assert "0 context line(s) after" in result.error.message
+    assert "line 17" in result.error.message
+    assert _git(repo, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    ("diff", "reason"),
+    [
+        (ZERO_CONTEXT_DIFF, "context line(s) before"),
+        (UNANCHORED_ADD_DIFF, "add-only hunk"),
+        (NO_TRAILING_DIFF, "context line(s) after"),
+    ],
+    ids=["zero-context", "unanchored-add", "no-trailing-context"],
+)
+def test_context_free_patches_are_never_proposed(
+    penv: dict[str, Any], diff: str, reason: str
+) -> None:
+    backend = _backend(penv, diff)
+    with TestClient(_app(penv, backend)) as client:
+        inv = _start(client)
+        body = _wait_for(client, inv, TERMINAL_STATUSES)
+        assert body["status"] == "UNRESOLVED"
+        assert body["proposed_patch"] is None
+        assert reason in body["patch_error"]
+        assert _git(_repo(client, inv), "status", "--porcelain") == ""

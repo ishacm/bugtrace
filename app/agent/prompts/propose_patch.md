@@ -17,6 +17,9 @@ Return:
   - only modify existing files that appear in the evidence above; do not create, delete or
     rename files;
   - hunk headers `@@ -<start>,<count> +<start>,<count> @@` with counts that match the hunk;
-  - context lines copied exactly from the file, prefixed with a single space;
+  - standard context: exactly 3 unchanged lines before and 3 after each change, copied
+    exactly from the file and prefixed with a single space (blank lines become a single
+    space). Use fewer only when the change is within 3 lines of the start or end of the
+    file. Never emit a hunk with no context;
   - keep the change as small as possible; do not reformat unrelated code.
 - `evidence_ids`: the evidence IDs that justify this change.

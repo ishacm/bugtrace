@@ -16,10 +16,12 @@ from pathlib import Path
 from app.agent.models import AgentEvent
 from app.agent.runner import InvestigationRecord
 from app.data.models import PublicCase
+from app.evaluation.models import EvaluationResult, EvaluationStatus
 from app.storage.models import (
     Approval,
     ApprovalDecision,
     DecisionConflictError,
+    InvalidTransitionError,
     InvestigationStatus,
     InvestigationSummary,
     StoredInvestigation,
@@ -50,6 +52,12 @@ CREATE TABLE IF NOT EXISTS investigation_approvals (
     patch_id         TEXT NOT NULL,
     patch_sha256     TEXT NOT NULL,
     decided_at       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS investigation_evaluations (
+    investigation_id TEXT PRIMARY KEY REFERENCES investigations(investigation_id),
+    status           TEXT NOT NULL,
+    result_json      TEXT NOT NULL,
+    recorded_at      TEXT NOT NULL
 );
 """
 
@@ -176,6 +184,34 @@ class InvestigationStore:
             self._insert_events(conn, investigation_id, [event], source="service")
         return self.get(investigation_id)
 
+    def record_evaluation(
+        self, investigation_id: str, result: EvaluationResult, *, event: AgentEvent
+    ) -> StoredInvestigation:
+        """Atomically store the evaluation result and close the case.
+
+        EVALUATING -> RESOLVED only when the harness reported the issue resolved;
+        every other outcome (failed tests, errors, timeouts) -> UNRESOLVED."""
+        target = (
+            InvestigationStatus.RESOLVED
+            if result.status == EvaluationStatus.RESOLVED and result.resolved is True
+            else InvestigationStatus.UNRESOLVED
+        )
+        with self._connect() as conn:
+            current = InvestigationStatus(self._row(conn, investigation_id)["status"])
+            if current != InvestigationStatus.EVALUATING:
+                raise InvalidTransitionError(current, target)
+            conn.execute(
+                "INSERT INTO investigation_evaluations (investigation_id, status, result_json,"
+                " recorded_at) VALUES (?, ?, ?, ?)",
+                (investigation_id, result.status.value, result.model_dump_json(), _now()),
+            )
+            conn.execute(
+                "UPDATE investigations SET status = ?, updated_at = ? WHERE investigation_id = ?",
+                (target.value, _now(), investigation_id),
+            )
+            self._insert_events(conn, investigation_id, [event], source="service")
+        return self.get(investigation_id)
+
     def append_event(self, investigation_id: str, event: AgentEvent) -> None:
         with self._connect() as conn:
             self._row(conn, investigation_id)
@@ -189,6 +225,10 @@ class InvestigationStore:
             events = self._events(conn, investigation_id)
             approval_row = conn.execute(
                 "SELECT * FROM investigation_approvals WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            evaluation_row = conn.execute(
+                "SELECT result_json FROM investigation_evaluations WHERE investigation_id = ?",
                 (investigation_id,),
             ).fetchone()
         approval = None
@@ -214,6 +254,11 @@ class InvestigationStore:
             events=events,
             record=record,
             approval=approval,
+            evaluation=(
+                EvaluationResult.model_validate_json(evaluation_row["result_json"])
+                if evaluation_row is not None
+                else None
+            ),
         )
 
     def events(self, investigation_id: str) -> list[AgentEvent]:

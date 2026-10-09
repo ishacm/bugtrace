@@ -845,7 +845,6 @@ def initial_state(
         patch_error=None,
         approval_status=None,
         patch_result=None,
-        test_result=None,
     )
 
 

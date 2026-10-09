@@ -4,7 +4,7 @@
 V1
 
 ## Current task
-TASK 009 — SWE-bench evaluation
+TASK 010 — Regression evals + CI
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -15,7 +15,7 @@ TASK 009 — SWE-bench evaluation
 - [x] TASK 006 — API + persistence
 - [x] TASK 007 — Detective UI + live streaming
 - [x] TASK 008 — Patch proposal + human approval
-- [ ] TASK 009 — SWE-bench evaluation
+- [x] TASK 009 — SWE-bench evaluation
 - [ ] TASK 010 — Regression evals + CI
 - [ ] TASK 011 — Vertex AI + Cloud Run
 - [ ] TASK 012 — Polish + optional V3 extension
@@ -33,8 +33,25 @@ TASK 007: `make format`, `make lint` clean; `make test` — 169 passed (18 new, 
 
 TASK 008: `make format`, `make lint` clean; `make test` — 207 passed (38 new in `tests/test_patches.py`, stub model, no Gemini). Coverage: diff validator accepts a valid diff, normalizes blank context lines, and rejects 17 malformed or unsafe diffs (empty, garbage, no hunks, wrong counts in either direction, bad hunk header, `..`/absolute paths, `.git`/`.env`, create/delete, rename, mode/binary headers, duplicate file, no-op hunk). Read-only `check_patch` never mutates and rejects stale context, missing files, traversal and symlink escapes. A COMPLETED report gives a grounded `ProposedPatch` (invented evidence ID dropped) and status AWAITING_APPROVAL with the workspace untouched. Invalid, non-applying or ungrounded diffs are retried with feedback up to `agent_max_patch_attempts`, then end UNRESOLVED with `patch_error`. A PARTIAL report proposes nothing. Reject → UNRESOLVED with the workspace byte-identical and HEAD unchanged. Approve → PATCHING → patch applied only in the workspace (one file modified, HEAD unchanged, BugTrace `git status` unchanged) → UNRESOLVED. Decisions get 409 in PREPARING/CANCELLED/finished-without-patch states and on a second decision; 404/422 for bad ids or bodies. AWAITING_APPROVAL and the patch survive an app restart, and approval then resumes the graph from the SQLite checkpoint. Direct `apply_patch` is refused before approval, when PATCHING has no recorded approval, and when the stored patch changed after approval; the stdio patch server exposes only `apply_patch` and refuses before approval. No `GOLD` text in any prompt (including patch prompts), API response or page. Checkpoint state round-trips with no unregistered-type warnings. Pages show the diff, the Approve/Reject controls only while AWAITING_APPROVAL, and rejected/applied/no-valid-patch outcomes. Live (uvicorn, `astropy__astropy-12907`): every Gemini call returned 429, so the report was PARTIAL/LOW and correctly no patch was proposed; a live `decision` on it returned 409 and the workspace was clean. A live end-to-end patch proposal has not been run yet (needs model quota).
 
+TASK 008 follow-up (context enforcement, before TASK 009): removed `--unidiff-zero` from `git apply --check` and `git apply`. The validator now requires 3-line context (boundary exceptions above) and rejects zero-context and unanchored add-only hunks. The patch prompt asks for standard 3-line context. Test diffs now use standard context. `make format`, `make lint` clean; `make test` — 219 passed (12 new: zero-context, short-leading and unanchored-add rejection in the parser; check and real privileged apply for a 3-line-context patch, a line-1 patch, a last-line patch and an anchored insertion; short trailing context away from EOF rejected by `check_patch`; context-free model diffs never reach AWAITING_APPROVAL; `GIT_APPLY_OPTIONS` has no `--unidiff-zero`). Traversal, `.git`/`.env`, create/delete/rename, binary and grounding tests unchanged and passing.
+
+TASK 009: `make format`, `make lint` clean; `make test` — 254 passed, 2 skipped (the opt-in real-case integration tests). 35 new tests, no Docker, network or Gemini. `tests/test_evaluation.py` runs a fake harness (`tests/fixtures/fake_swebench_harness.py`) as a real subprocess. It uses the same CLI and report layout as SWE-bench, and the test reference rows contain `GOLD` markers. Coverage:
+- Predictions are written as SWE-bench JSONL. The harness command is an argument list with the pinned version, and its environment excludes `GEMINI_API_KEY`, `BUGTRACE_*` and `GIT_*`.
+- Reference files are read from diff headers. Localization covers top-1 hit/miss, top-3 recall and candidate overlap.
+- The reference cache stores rows and rejects traversal and malformed ids.
+- Report parsing covers resolved, unresolved, infra failure, missing report and harness failure. Test results are stored as counts, never names.
+- Evaluator outcomes, each graded from harness output: RESOLVED; UNRESOLVED (tests fail); UNRESOLVED (patch did not apply); TIMEOUT (tests); TIMEOUT (whole harness, with the process group killed and confirmed gone); ERROR (crash); UNAVAILABLE (no Docker, localization still computed, harness never started); ERROR (reference unavailable, or base commit mismatch); ERROR WORKSPACE_UNSAFE (extra workspace file, harness never started).
+- `build_request` refuses unless the status is EVALUATING with an approval, a sha256 match and an applied patch.
+- Service/API flow: approve goes PATCHING → EVALUATING (visible in the API and on the page) → RESOLVED. The evaluator receives exactly the approved diff and sha.
+- Evaluator outcomes UNRESOLVED, UNAVAILABLE or an exception all end the case UNRESOLVED, with the result persisted and exception text not exposed.
+- A full fake-harness flow through the API ends RESOLVED. No `GOLD` text or gold keys appear in the API or page, the LangGraph checkpoint DB or the agent record.
+- Cancelling during EVALUATING kills the harness. Results survive a restart. A restart during EVALUATING ends FAILED. `record_evaluation` requires EVALUATING.
+- Leakage tests were tightened: the agent, MCP, workspace and data packages import nothing from `app.evaluation`. A subprocess probe shows that importing the agent and both MCP servers loads only `app.evaluation.models` (gold-free), not `gold`. Result and request models contain no gold field names.
+
+`make eval-integration` (`SWEBENCH_INTEGRATION=1`): the real reference row for `astropy__astropy-12907` was fetched from `SWE-bench/SWE-bench_Verified` and cached. Its base commit matches the seeded case and it has the harness 5.x fields (passed). The oracle harness run was skipped because Docker is not installed. `uv run --isolated --with swebench==5.0.2 python -m swebench.harness.run_evaluation --help` succeeded and lists every flag BugTrace passes. A manual run of the real `SwebenchEvaluator` on the real case returned `UNAVAILABLE / DOCKER_UNAVAILABLE` with localization computed from the real reference row. That run used a hand-written suspect list, so it is not a benchmark result. **No real harness verdict (RESOLVED/UNRESOLVED) has been produced yet.** It needs Docker. Acceptance is met via the documented-limitation branch: every boundary is implemented and tested.
+
 ## Blockers
-None.
+None. Real SWE-bench grading needs Docker, which is not installed here.
 
 ## Known limitations
 - Docker not installed locally; doctor reports a WARNING (needed only for V2 evaluation).
@@ -61,15 +78,32 @@ None.
 - Starlette's TestClient buffers streaming responses, so tests for incremental delivery and disconnects drive the stream generator directly against a real `InvestigationService`.
 - No authentication or CSRF protection on the UI or API: local single-user tool for V1.
 - Patch stage (TASK 008). The graph continues after `finalize` only for a COMPLETED report: `propose_patch` → `pause_for_approval` (LangGraph `interrupt`) → `apply_patch` on approve, END on reject. Graph state is checkpointed with `AsyncSqliteSaver` at `BUGTRACE_CHECKPOINT_PATH` (default `var/checkpoints.db`, thread id = investigation id). The serializer allowlists BugTrace's own Pydantic/enum types. CLI/test runs without a checkpointer use an in-memory saver.
-- Patch validation: strict unified-diff parser (`app/agent/patches.py`), then a grounding check (every file must appear in evidence; at least one known evidence ID), then read-only `check_patch` (`git apply --check` with the patch file in a temp dir outside the repo). Only edits to existing files are allowed. Both check and apply use `--whitespace=nowarn --unidiff-zero`; `--unidiff-zero` stops git from forcing hunks without trailing context to match at end of file, while context and removed lines must still match.
+- Patch validation: strict unified-diff parser (`app/agent/patches.py`), then a grounding check (every file must appear in evidence; at least one known evidence ID), then read-only `check_patch` (`git apply --check` with the patch file in a temp dir outside the repo). Only edits to existing files are allowed. Hunks need standard context: 3 unchanged lines before and after each change. Fewer leading lines are allowed only when the hunk starts at line 1; fewer trailing lines only when the hunk ends at the file's last line (checked against the file in `check_patch`). Add-only hunks with no context are rejected. Check and apply both use only `--whitespace=nowarn`, so git keeps its default strict anchoring. An earlier `--unidiff-zero` was removed before TASK 009 (follow-up below).
 - Privileged execution: separate stdio MCP server `app/mcp_servers/patch_server.py` with a single tool `apply_patch()` that takes no diff. It loads the persisted patch and refuses unless status is PATCHING, an `approve` row exists in `investigation_approvals`, and the patch sha256 matches the approved one. It writes the patch to `var/workspaces/<id>/patches/<sha>.diff`, runs `git apply --check` then `git apply`, and records `git diff`/`--stat`. It never commits or pushes. The service starts it only after an approve decision.
 - Decisions: `POST /api/investigations/{id}/decision` `{"decision": "approve"|"reject"}`. The store records the decision, changes status and adds the lifecycle event in one transaction (approve → PATCHING, reject → UNRESOLVED), then the paused graph is resumed in the background. Added transition PATCHING → UNRESOLVED (applied, not evaluated). TASK 009 should route through EVALUATING instead.
 - New event types: `patch_proposed`, `approval_required`, `patch_approved`, `patch_rejected`, `patch_applied`. A finished investigation with no valid patch ends UNRESOLVED with `patch_error` and a `NO VALID PATCH` event.
 - The UI panel is `proposal`, not `patch`, because `patch` is a SWE-bench gold key name and the no-gold-keys tests treat it as a leak. The button reads "Approve & apply" rather than the task's "Approve & Test" because evaluation arrives in TASK 009.
 - The read-only repo server now has 9 tools (added `check_patch`, which never writes).
 
+- Evaluation (TASK 009). After an approved patch is applied, `InvestigationService._evaluate` moves PATCHING → EVALUATING and builds an `EvaluationRequest` (`app/evaluation/evaluator.build_request`). That step re-checks the approval, the sha256 binding and the applied result, and reads `git status` of the workspace for the safety check. It then calls the `Evaluator`. `record_evaluation` stores the result in `investigation_evaluations`, appends the event and moves to RESOLVED in one transaction. RESOLVED requires the harness's own `resolved: true`. Every other outcome (failed tests, apply failure, error, timeout, unavailable) ends UNRESOLVED, and `evaluation.status` tells them apart. A failed or refused apply still goes PATCHING → UNRESOLVED without evaluation.
+- Evaluation is not an MCP tool, unlike `docs/MCP.md`'s V2 sketch. It runs in the service, outside the agent's tool surface, so neither the graph nor any MCP server can reach reference data. The approval re-check that the doc asks for is in `build_request`.
+- Reference data: `GoldSource` reads `SWE-bench/SWE-bench_Verified` (`BUGTRACE_EVALUATION_DATASET`). The seed dataset `princeton-nlp/...` lacks the harness 5.x fields (`image`, `eval_script`, `log_parser`). Rows are loaded by paging datasets-server `/rows`, because `/filter` returned 500. They are cached at `var/evaluations/reference/<instance_id>.json`. A base-commit mismatch with the public case is an ERROR.
+- Harness: official `swebench.harness.run_evaluation`, pinned (`BUGTRACE_EVALUATION_HARNESS_VERSION=5.0.2`). It runs via `uv run --isolated --no-project --with swebench==…`, so its dependencies never enter BugTrace's env. It is an asyncio subprocess with an argument list, explicit cwd, its own process group, and a whole-run timeout (`BUGTRACE_EVALUATION_TIMEOUT_SECONDS`, default 3600). The per-test timeout is `BUGTRACE_EVALUATION_TEST_TIMEOUT_SECONDS` (default 1800). On a timeout, leftover containers named with the run id are removed (best effort).
+- Run artifacts go in `var/evaluations/runs/<investigation_id>/<run_id>/`: `dataset.json` (the reference row), `predictions.jsonl`, `manifest.json` (argv + versions + hashes), `harness.log`, the harness `logs/` and `reports/`. These are evaluator-only and contain reference data. They are never served, persisted to the DB or shown. The persisted result keeps the run id, dataset, harness version, reference-row sha256, prediction sha256 and exit code for reproducibility.
+- Persisted/API/UI result (`EvaluationResult`, gold-free) includes:
+  - status, resolved, failure_reason and a fixed message (never stderr or log text)
+  - patch applied in the evaluator
+  - target/regression test pass/fail counts (FAIL_TO_PASS/PASS_TO_PASS counts, never names)
+  - localization: top-1 file hit, top-3 file recall, reference file count, candidate overlap
+  - trace: tool calls, iterations, evidence, grounded claims, agent seconds. Model calls and token usage are not recorded by the agent yet and are left null.
+  - safety: changed files, unauthorized writes
+- The API has a new `evaluation` field. The UI has a new `evaluation` panel and verdicts EVALUATING PATCH / CASE CLOSED / TESTS FAILED / NOT EVALUATED / EVALUATION ERROR / EVALUATION TIMED OUT. The approve button now reads "Approve & test".
+- Agent state: removed the unused `test_result` slot. Evaluation results never enter graph state, checkpoints or the agent record, and evaluation never resumes the graph. The legal edge EVALUATING → AWAITING_APPROVAL (reopen) exists but is unused. If it is ever used, results must not be fed to the agent.
+- Apple Silicon: the harness 5.x images are `x86_64` (e.g. `swebench/sweb.eval.x86_64.astropy_1776_astropy-12907`). On arm64 they need Docker Desktop's x86 emulation and will be slow. If an image cannot run, evaluation ends ERROR/TIMEOUT and the rest of BugTrace is unaffected.
+- `fetch_raw_rows` now pages through `iter_raw_rows` with 100-row pages; the seed output is unchanged.
+
 ## Notes
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 009 — SWE-bench evaluation
+TASK 010 — Regression evals + CI

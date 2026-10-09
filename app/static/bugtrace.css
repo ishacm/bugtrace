@@ -155,3 +155,12 @@ details > summary { cursor: pointer; }
 .decision { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .decision-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .decision-made { margin: 12px 0 0; }
+
+/* Benchmark evaluation */
+.badge-eval-resolved { color: var(--ok); }
+.badge-eval-unresolved, .badge-eval-unavailable { color: var(--warn); }
+.badge-eval-error, .badge-eval-timeout { color: var(--bad); }
+.eval-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 8px 0; }
+.eval-grid dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.eval-grid dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.repro ul { list-style: none; padding: 0; font-size: 13px; }

@@ -3,6 +3,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,12 @@ from app.agent.tools import PatchApplier, RepoToolClient
 from app.config import Settings
 from app.data.models import PUBLIC_CASE_FIELDS, PublicCase
 from app.data.store import write_cases
+from app.evaluation.models import (
+    EvaluationRequest,
+    EvaluationResult,
+    EvaluationStatus,
+    PassFailCounts,
+)
 from app.main import create_app
 from app.mcp_servers.models import ApplyPatchResult
 from app.mcp_servers.patch_tools import PatchTools
@@ -87,6 +94,47 @@ class FakeBackend:
             raise RuntimeError("FakeBackend needs database_path for the patch client")
         store = InvestigationStore(self.database_path)
         yield LocalPatchClient(PatchTools.for_investigation(self.manager, store, investigation_id))
+
+    async def changed_files(self, investigation_id: str) -> list[str]:
+        return await asyncio.to_thread(self.manager.changed_files, investigation_id)
+
+
+class StaticEvaluator:
+    """Stands in for the SWE-bench harness (no Docker, network or gold data)."""
+
+    def __init__(
+        self,
+        status: EvaluationStatus = EvaluationStatus.RESOLVED,
+        *,
+        delay: float = 0,
+        error: Exception | None = None,
+    ) -> None:
+        self.status = status
+        self.delay = delay
+        self.error = error
+        self.requests: list[EvaluationRequest] = []
+
+    async def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
+        self.requests.append(request)
+        await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        now = datetime.now(UTC)
+        graded = self.status in (EvaluationStatus.RESOLVED, EvaluationStatus.UNRESOLVED)
+        resolved = self.status == EvaluationStatus.RESOLVED
+        return EvaluationResult(
+            status=self.status,
+            resolved=resolved if graded else None,
+            message=f"static evaluator: {self.status}",
+            patch_id=request.patch_id,
+            patch_sha256=request.patch_sha256,
+            patch_applied_in_evaluator=True if graded else None,
+            target_tests=PassFailCounts(passed=2, failed=0 if resolved else 2) if graded else None,
+            regression_tests=PassFailCounts(passed=5, failed=0) if graded else None,
+            started_at=now,
+            finished_at=now,
+            duration_seconds=0,
+        )
 
 
 @pytest.fixture

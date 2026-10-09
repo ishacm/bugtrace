@@ -4,9 +4,11 @@ Raw rows contain gold answers. Only the adapter (`app.data.swebench`) and the
 evaluator (`app.evaluation`) may use this module; agent code must not.
 """
 
+import itertools
 import json
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from typing import Any
 
 DATASETS_SERVER_URL = "https://datasets-server.huggingface.co/rows"
@@ -20,19 +22,17 @@ class DatasetFetchError(RuntimeError):
     pass
 
 
-def fetch_raw_rows(dataset_id: str, split: str, limit: int) -> list[RawRow]:
-    """Return up to `limit` raw rows from the start of `split`."""
-    rows: list[RawRow] = []
+def iter_raw_rows(dataset_id: str, split: str) -> Iterator[RawRow]:
+    """Yield raw rows from the start of `split`, one page request at a time."""
     offset = 0
-    while len(rows) < limit:
-        length = min(MAX_PAGE_SIZE, limit - len(rows))
+    while True:
         query = urllib.parse.urlencode(
             {
                 "dataset": dataset_id,
                 "config": "default",
                 "split": split,
                 "offset": offset,
-                "length": length,
+                "length": MAX_PAGE_SIZE,
             }
         )
         try:
@@ -45,12 +45,24 @@ def fetch_raw_rows(dataset_id: str, split: str, limit: int) -> list[RawRow]:
 
         page = payload.get("rows", [])
         if not page:
-            break
+            return
         for item in page:
             if item.get("truncated_cells"):
                 raise DatasetFetchError(
                     f"row {item.get('row_idx')} has truncated cells: {item['truncated_cells']}"
                 )
-            rows.append(item["row"])
+            yield item["row"]
         offset += len(page)
-    return rows[:limit]
+
+
+def fetch_raw_rows(dataset_id: str, split: str, limit: int) -> list[RawRow]:
+    """Return up to `limit` raw rows from the start of `split`."""
+    return list(itertools.islice(iter_raw_rows(dataset_id, split), limit))
+
+
+def find_raw_row(dataset_id: str, split: str, instance_id: str) -> RawRow:
+    """Return the raw row for one instance (evaluator use only)."""
+    for row in iter_raw_rows(dataset_id, split):
+        if row.get("instance_id") == instance_id:
+            return row
+    raise DatasetFetchError(f"{instance_id} not found in {dataset_id}:{split}")

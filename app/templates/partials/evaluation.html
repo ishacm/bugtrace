@@ -1,0 +1,64 @@
+{% set e = inv.evaluation %}
+{% if e %}
+<div class="card evaluation">
+  <h2 class="card-title">Benchmark evaluation</h2>
+  <p class="eyebrow">
+    <span class="badge badge-eval-{{ e.status | lower }}">{{ e.status }}</span>
+    SWE-bench{% if e.harness %} {{ e.harness.version }}{% endif %}
+    · patch <span class="mono">{{ e.patch_id }}</span>
+    · {{ "%.1f" | format(e.duration_seconds) }}s
+  </p>
+  <p class="report-summary">{{ e.message }}</p>
+  <dl class="eval-grid">
+    <div><dt>Verdict source</dt><dd>{{ "harness test results" if e.resolved is not none else "no test verdict" }}</dd></div>
+    {% if e.patch_applied_in_evaluator is not none %}<div><dt>Applied in evaluator</dt><dd>{{ "yes" if e.patch_applied_in_evaluator else "no" }}</dd></div>{% endif %}
+    {% if e.target_tests %}<div><dt>Target tests passing</dt><dd>{{ e.target_tests.passed }}/{{ e.target_tests.passed + e.target_tests.failed }}</dd></div>{% endif %}
+    {% if e.regression_tests %}<div><dt>Regression tests passing</dt><dd>{{ e.regression_tests.passed }}/{{ e.regression_tests.passed + e.regression_tests.failed }}</dd></div>{% endif %}
+    {% if e.failure_reason %}<div><dt>Failure</dt><dd class="mono">{{ e.failure_reason }}</dd></div>{% endif %}
+  </dl>
+  {% if e.localization %}{% set l = e.localization %}
+  <h3>Localization</h3>
+  <dl class="eval-grid">
+    <div><dt>Top-1 file</dt><dd>{{ "hit" if l.top1_file_hit else "miss" }}</dd></div>
+    <div><dt>Top-3 file recall</dt><dd>{{ "%.0f" | format(l.top3_file_recall * 100) }}%</dd></div>
+    <div><dt>Reference files</dt><dd>{{ l.reference_file_count }}</dd></div>
+    <div><dt>Patch files in reference</dt><dd>{{ l.candidate_file_overlap }}</dd></div>
+  </dl>
+  {% endif %}
+  {% if e.trace %}{% set t = e.trace %}
+  <h3>Trace</h3>
+  <dl class="eval-grid">
+    <div><dt>Tool calls</dt><dd>{{ t.tool_calls }}</dd></div>
+    <div><dt>Iterations</dt><dd>{{ t.iterations }}</dd></div>
+    <div><dt>Grounded claims</dt><dd>{{ t.grounded_claims }}/{{ t.claims }}</dd></div>
+    {% if t.agent_seconds is not none %}<div><dt>Agent time</dt><dd>{{ "%.1f" | format(t.agent_seconds) }}s</dd></div>{% endif %}
+  </dl>
+  {% endif %}
+  {% if e.safety %}
+  <h3>Safety</h3>
+  <dl class="eval-grid">
+    <div><dt>Unauthorized writes</dt><dd>{{ e.safety.unauthorized_writes }}</dd></div>
+    <div><dt>Changed files</dt><dd class="mono">{{ e.safety.changed_files | join(", ") or "none" }}</dd></div>
+  </dl>
+  {% endif %}
+  {% if e.harness %}
+  <details class="repro">
+    <summary>Reproducibility</summary>
+    <ul class="mono">
+      <li>run {{ e.harness.run_id }}</li>
+      <li>{{ e.harness.dataset }}:{{ e.harness.split }}</li>
+      {% if e.harness.reference_row_sha256 %}<li>reference row sha256 {{ e.harness.reference_row_sha256[:16] }}</li>{% endif %}
+      {% if e.harness.prediction_sha256 %}<li>prediction sha256 {{ e.harness.prediction_sha256[:16] }}</li>{% endif %}
+      <li>patch sha256 {{ e.patch_sha256[:16] }}</li>
+      {% if e.harness.exit_code is not none %}<li>harness exit {{ e.harness.exit_code }}</li>{% endif %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% elif inv.status == "EVALUATING" %}
+<div class="card evaluation">
+  <h2 class="card-title">Benchmark evaluation</h2>
+  <p class="muted">Running the SWE-bench tests in an isolated container. The first run of a
+    case downloads its environment image and can take several minutes.</p>
+</div>
+{% endif %}

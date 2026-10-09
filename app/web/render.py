@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.agent.models import AgentEvent
 from app.api.investigations import InvestigationResponse
+from app.evaluation.models import EvaluationResult, EvaluationStatus
 from app.storage.models import (
     TERMINAL_STATUSES,
     ApprovalDecision,
@@ -24,7 +25,7 @@ S = InvestigationStatus
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 
 # Panels replaced as a unit on every state update; names match `data-panel` in the page.
-PANELS = ("status", "suspects", "evidence", "hypothesis", "report", "proposal")
+PANELS = ("status", "suspects", "evidence", "hypothesis", "report", "proposal", "evaluation")
 
 VerdictKind = Literal[
     "running", "awaiting", "completed", "partial", "unresolved", "failed", "cancelled"
@@ -53,6 +54,12 @@ def verdict(inv: InvestigationResponse) -> Verdict:
         return Verdict(
             "running", "APPLYING APPROVED PATCH", "Applying the approved diff in the workspace."
         )
+    if status == S.EVALUATING:
+        return Verdict(
+            "running",
+            "EVALUATING PATCH",
+            "Running the SWE-bench tests against the applied patch in an isolated container.",
+        )
     if status not in TERMINAL_STATUSES:
         return Verdict("running", "INVESTIGATION IN PROGRESS", "The agent is gathering evidence.")
     if status == S.FAILED:
@@ -64,7 +71,13 @@ def verdict(inv: InvestigationResponse) -> Verdict:
             "Stopped on request. Anything shown below was gathered before cancellation.",
         )
     if status == S.RESOLVED:
-        return Verdict("completed", "CASE CLOSED", "The proposed fix passed evaluation.")
+        return Verdict(
+            "completed",
+            "CASE CLOSED",
+            "SWE-bench tests pass: the approved patch resolves the issue with no regressions.",
+        )
+    if inv.evaluation is not None:
+        return _evaluated_verdict(inv.evaluation)
     if inv.approval is not None and inv.approval.decision == ApprovalDecision.REJECT:
         return Verdict(
             "unresolved",
@@ -121,3 +134,28 @@ def render_panels(stored: StoredInvestigation) -> dict[str, str]:
 
 def render_event(event: AgentEvent, seq: int) -> str:
     return templates.get_template("partials/event.html").render(event=event, seq=seq)
+
+
+def _evaluated_verdict(result: EvaluationResult) -> Verdict:
+    """An applied patch that was evaluated but did not resolve the case."""
+    if result.status == EvaluationStatus.UNRESOLVED:
+        return Verdict(
+            "unresolved",
+            "TESTS FAILED",
+            f"{result.message} The case remains UNRESOLVED.",
+        )
+    if result.status == EvaluationStatus.UNAVAILABLE:
+        return Verdict(
+            "unresolved",
+            "NOT EVALUATED",
+            f"{result.message} The patch is applied in the workspace, but no test verdict "
+            "exists, so the case remains UNRESOLVED.",
+        )
+    title = (
+        "EVALUATION TIMED OUT" if result.status == EvaluationStatus.TIMEOUT else "EVALUATION ERROR"
+    )
+    return Verdict(
+        "failed",
+        title,
+        f"{result.message} No test verdict was produced, so the case remains UNRESOLVED.",
+    )

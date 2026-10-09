@@ -100,6 +100,8 @@ EventType = Literal[
     "patch_approved",
     "patch_rejected",
     "patch_applied",
+    "evaluation_started",
+    "evaluation_finished",
     "case_closed",
     "error",
 ]

@@ -5,6 +5,13 @@ Accepted: in-place content edits to existing text files, `--- a/<path>` /
 and hunks whose line counts match their headers. Rejected: new, deleted,
 renamed, mode-changed or binary files, paths that are absolute, contain `..`,
 touch `.git` or `.env*`, and anything that is not a well-formed hunk.
+
+Hunks must carry standard context: CONTEXT_LINES unchanged lines before and after
+the change, fewer only at a file boundary. The leading side is checked here (fewer
+lines only when the hunk starts at line 1); the trailing side needs the file
+length, so such hunks are marked `ends_at_eof` and checked by the caller against
+the file. Add-only hunks without any context have nothing to anchor them and are
+rejected outright. This keeps `git apply` at its default (strict) anchoring.
 """
 
 import hashlib
@@ -14,6 +21,7 @@ from pathlib import PurePosixPath
 
 MAX_PATCH_CHARS = 60_000
 MAX_PATCH_FILES = 10
+CONTEXT_LINES = 3  # what `diff -u` / `git diff` emit by default
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
 _PATH_RE = re.compile(r"^[A-Za-z0-9_./@+-]+$")
@@ -38,11 +46,40 @@ class InvalidPatchError(ValueError):
 
 
 @dataclass(frozen=True)
+class Hunk:
+    path: str
+    old_start: int
+    old_count: int
+    leading: int  # unchanged lines before the first change
+    trailing: int  # unchanged lines after the last change
+
+    @property
+    def old_end(self) -> int:
+        return self.old_start + self.old_count - 1
+
+    @property
+    def ends_at_eof(self) -> bool:
+        """Short trailing context is only legitimate when the hunk reaches end of file."""
+        return self.trailing < CONTEXT_LINES
+
+
+@dataclass(frozen=True)
 class ParsedPatch:
     diff: str  # normalized text that was validated; apply exactly this
     files: list[str]
     added: int
     removed: int
+    hunks: list[Hunk]
+
+
+def check_hunk_reaches_eof(hunk: Hunk, file_lines: int) -> None:
+    """For hunks with short trailing context, require that they really end at EOF."""
+    if hunk.ends_at_eof and hunk.old_end != file_lines:
+        raise InvalidPatchError(
+            f"hunk at {hunk.path}:{hunk.old_start} has {hunk.trailing} context line(s) after "
+            f"the change; include {CONTEXT_LINES} unless the hunk ends at the last line "
+            f"of the file (line {file_lines})"
+        )
 
 
 def patch_sha256(diff: str) -> str:
@@ -85,6 +122,7 @@ def parse_unified_diff(diff: str) -> ParsedPatch:
     lines = diff.strip("\n").split("\n")
     out: list[str] = []
     files: list[str] = []
+    hunk_info: list[Hunk] = []
     added = removed = 0
     i = 0
     while i < len(lines):
@@ -114,11 +152,13 @@ def parse_unified_diff(diff: str) -> ParsedPatch:
             match = _HUNK_RE.match(lines[i])
             if not match:
                 raise InvalidPatchError(f"malformed hunk header: {lines[i]!r}")
-            old_left = int(match.group(2) or 1)
+            old_start = int(match.group(1))
+            old_count = old_left = int(match.group(2) or 1)
             new_left = int(match.group(4) or 1)
             out.append(lines[i])
             i += 1
             changes = 0
+            tags: list[str] = []
             while old_left > 0 or new_left > 0:
                 if i >= len(lines):
                     raise InvalidPatchError("hunk is shorter than its header declares")
@@ -137,6 +177,8 @@ def parse_unified_diff(diff: str) -> ParsedPatch:
                     changes += 1
                 elif tag != "\\":
                     raise InvalidPatchError(f"invalid hunk line: {body!r}")
+                if tag != "\\":
+                    tags.append(tag)
                 if old_left < 0 or new_left < 0:
                     raise InvalidPatchError("hunk is longer than its header declares")
                 out.append(body)
@@ -148,6 +190,7 @@ def parse_unified_diff(diff: str) -> ParsedPatch:
                 raise InvalidPatchError("hunk is longer than its header declares")
             if changes == 0:
                 raise InvalidPatchError("hunk contains no changes")
+            hunk_info.append(_check_context(new, old_start, old_count, tags))
             hunks += 1
         if hunks == 0:
             raise InvalidPatchError(f"no hunks for {new!r}")
@@ -156,4 +199,30 @@ def parse_unified_diff(diff: str) -> ParsedPatch:
         raise InvalidPatchError("patch has no file sections")
     if len(files) > MAX_PATCH_FILES:
         raise InvalidPatchError(f"patch touches more than {MAX_PATCH_FILES} files")
-    return ParsedPatch(diff="\n".join(out) + "\n", files=files, added=added, removed=removed)
+    return ParsedPatch(
+        diff="\n".join(out) + "\n", files=files, added=added, removed=removed, hunks=hunk_info
+    )
+
+
+def _check_context(path: str, old_start: int, old_count: int, tags: list[str]) -> Hunk:
+    changed = [n for n, tag in enumerate(tags) if tag != " "]
+    hunk = Hunk(
+        path=path,
+        old_start=old_start,
+        old_count=old_count,
+        leading=changed[0],
+        trailing=len(tags) - 1 - changed[-1],
+    )
+    if "-" not in tags and " " not in tags:
+        raise InvalidPatchError(
+            f"add-only hunk at {path}:{old_start} has no context lines to anchor it; "
+            f"include {CONTEXT_LINES} unchanged lines before and after the insertion"
+        )
+    if old_start < 1:
+        raise InvalidPatchError(f"invalid hunk start line {old_start} in {path!r}")
+    if hunk.leading < CONTEXT_LINES and old_start != 1:
+        raise InvalidPatchError(
+            f"hunk at {path}:{old_start} has {hunk.leading} context line(s) before the change; "
+            f"include {CONTEXT_LINES} unless the hunk starts at line 1"
+        )
+    return hunk

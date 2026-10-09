@@ -66,4 +66,4 @@ class InvestigationState(TypedDict, total=False):
     patch_error: str | None
     approval_status: ApprovalStatus | None
     patch_result: PatchResult | None
-    test_result: str | None  # TASK 009
+    # Evaluation results never enter agent state; they live in app/evaluation + storage.

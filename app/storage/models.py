@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.agent.models import AgentEvent
 from app.agent.runner import InvestigationRecord
 from app.data.models import PublicCase
+from app.evaluation.models import EvaluationResult
 
 
 class InvestigationStatus(StrEnum):
@@ -31,8 +32,8 @@ TRANSITIONS: dict[InvestigationStatus, frozenset[InvestigationStatus]] = {
     S.PREPARING: frozenset({S.INVESTIGATING, S.FAILED, S.CANCELLED}),
     S.INVESTIGATING: frozenset({S.AWAITING_APPROVAL, S.UNRESOLVED, S.FAILED, S.CANCELLED}),
     S.AWAITING_APPROVAL: frozenset({S.PATCHING, S.UNRESOLVED, S.CANCELLED}),
-    # PATCHING -> UNRESOLVED: patch applied (or not applicable) without evaluation.
-    # TASK 009 routes applied patches through EVALUATING instead.
+    # PATCHING -> EVALUATING once the approved patch is applied; -> UNRESOLVED when
+    # the apply was refused or failed (nothing to evaluate).
     S.PATCHING: frozenset({S.EVALUATING, S.UNRESOLVED, S.FAILED, S.CANCELLED}),
     S.EVALUATING: frozenset({S.RESOLVED, S.UNRESOLVED, S.AWAITING_APPROVAL, S.FAILED, S.CANCELLED}),
     S.RESOLVED: frozenset(),
@@ -93,6 +94,7 @@ class StoredInvestigation(BaseModel):
     events: list[AgentEvent] = Field(default_factory=list)
     record: InvestigationRecord | None = None
     approval: Approval | None = None
+    evaluation: EvaluationResult | None = None  # gold-free benchmark verdict and metrics
 
 
 class InvestigationSummary(BaseModel):

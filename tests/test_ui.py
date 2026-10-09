@@ -31,7 +31,7 @@ from app.storage.models import InvestigationStatus
 from app.storage.sqlite import InvestigationStore
 from app.web.stream import investigation_stream
 from tests.test_agent import CASE_STATEMENT
-from tests.test_investigations_api import INSTANCE_ID, FakeBackend, _assert_no_gold
+from tests.test_investigations_api import INSTANCE_ID, FakeBackend, StaticEvaluator, _assert_no_gold
 
 S = InvestigationStatus
 
@@ -343,7 +343,15 @@ def test_sse_replays_persisted_events_then_ends(
     states = [m for m in messages if m["event"] == "state"]
     assert len(states) == 1 and states[0]["data"]["terminal"] is True
     panels = states[0]["data"]["panels"]
-    assert set(panels) == {"status", "suspects", "evidence", "hypothesis", "report", "proposal"}
+    assert set(panels) == {
+        "status",
+        "suspects",
+        "evidence",
+        "hypothesis",
+        "report",
+        "proposal",
+        "evaluation",
+    }
     assert "STUB SUMMARY COMPLETED" in panels["report"]
     assert messages[-1]["event"] == "end"
     assert messages[-1]["data"]["status"] == "UNRESOLVED"
@@ -411,6 +419,7 @@ def _service(ui_env: dict[str, Any], **backend_kwargs: Any) -> InvestigationServ
         max_iterations=settings.agent_max_iterations,
         max_tool_calls=settings.agent_max_tool_calls,
         checkpoint_path=settings.checkpoint_path,
+        evaluator=StaticEvaluator(),
     )
 
 
