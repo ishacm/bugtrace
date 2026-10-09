@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    swebench_dataset: str = "princeton-nlp/SWE-bench_Verified"
+    swebench_split: str = "test"
+    seed_limit: int = Field(default=10, ge=1, le=500)
+    cases_path: Path = Path("data/cases.jsonl")
+
     model_name: str | None = None
     gemini_api_key: SecretStr | None = Field(default=None, validation_alias="GEMINI_API_KEY")
 

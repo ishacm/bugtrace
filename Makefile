@@ -1,4 +1,4 @@
-.PHONY: setup doctor dev test lint format
+.PHONY: setup doctor dev seed test lint format
 
 setup:
 	uv sync
@@ -8,6 +8,9 @@ doctor:
 
 dev:
 	uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+seed:
+	uv run python scripts/seed_cases.py
 
 test:
 	uv run pytest
