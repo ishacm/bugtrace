@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Runtime data
+var/
+*.db
+*.sqlite
+*.sqlite3
+
+# Evaluation artifacts
+logs/
+evaluation_results/
+*.eval.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
