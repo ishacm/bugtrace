@@ -1,5 +1,20 @@
 # BugTrace
+<p>
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" />
+  <img src="https://img.shields.io/badge/LangGraph-Agent%20Orchestration-1C3C3C" />
+  <img src="https://img.shields.io/badge/MCP-Repository%20Tools-111111" />
+  <img src="https://img.shields.io/badge/Pydantic-E92063?logo=pydantic&logoColor=white" />
+</p>
 
+<p>
+  <img src="https://img.shields.io/badge/Gemini-Google%20AI-4285F4?logo=google&logoColor=white" />
+  <img src="https://img.shields.io/badge/Vertex%20AI-GCP-4285F4?logo=googlecloud&logoColor=white" />
+  <img src="https://img.shields.io/badge/SWE--bench-Evaluation-6C63FF" />
+  <img src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white" />
+  <img src="https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white" />
+  <img src="https://img.shields.io/badge/GitHub%20Actions-CI-2088FF?logo=githubactions&logoColor=white" />
+</p>
 **Evidence-grounded investigation of real software bugs.**
 
 BugTrace starts from a real, historical software issue and inspects the affected repository
