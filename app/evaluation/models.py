@@ -21,6 +21,7 @@ class EvaluationStatus(StrEnum):
 
 
 FailureReason = Literal[
+    "EVALUATION_DISABLED",
     "DOCKER_UNAVAILABLE",
     "HARNESS_UNAVAILABLE",
     "REFERENCE_UNAVAILABLE",

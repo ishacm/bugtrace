@@ -1,0 +1,60 @@
+# Cloud Run service template. Render with `make cloud-run-config` (scripts/render_cloud_run.py),
+# which fills in the placeholders from the environment, then deploy with
+# `gcloud run services replace`. See docs/DEPLOYMENT.md. Contains no secrets.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${BUGTRACE_SERVICE}
+  labels:
+    app: bugtrace
+spec:
+  template:
+    metadata:
+      annotations:
+        # One instance: SQLite and in-flight investigations live in that instance's
+        # in-memory filesystem and process. More instances would split state.
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        # Investigations run as background tasks after the POST returns; CPU must
+        # stay allocated between requests or they stall.
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      serviceAccountName: ${BUGTRACE_SERVICE_ACCOUNT}
+      containerConcurrency: 40
+      timeoutSeconds: 3600  # SSE streams stay open for the length of an investigation
+      containers:
+        - image: ${BUGTRACE_IMAGE}
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: BUGTRACE_MODEL_BACKEND
+              value: vertex
+            - name: BUGTRACE_MODEL_NAME
+              value: "${BUGTRACE_MODEL_NAME}"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: "${GOOGLE_CLOUD_PROJECT}"
+            - name: GOOGLE_CLOUD_LOCATION
+              value: "${GOOGLE_CLOUD_LOCATION}"
+            - name: BUGTRACE_EVALUATION_ENABLED
+              value: "false"
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi  # also holds /tmp (cloned workspaces, SQLite)
+          startupProbe:
+            httpGet:
+              path: /api/ready
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3

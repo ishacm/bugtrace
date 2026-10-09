@@ -1,4 +1,4 @@
-.PHONY: setup doctor dev seed workspace investigate test regression regression-baseline eval-integration agent-eval lint format
+.PHONY: setup doctor dev seed workspace investigate test regression regression-baseline eval-integration agent-eval lint format docker-build docker-run cloud-run-config
 
 setup:
 	uv sync
@@ -45,3 +45,19 @@ lint:
 format:
 	uv run ruff format .
 	uv run ruff check --fix .
+
+# Production container (Cloud Run image). Local development keeps using `make dev`.
+IMAGE ?= bugtrace:local
+
+docker-build:
+	docker build -t $(IMAGE) .
+
+# Runs the image like Cloud Run does (PORT=8080, JSON logs, evaluation disabled).
+# Model settings come from your shell, e.g. BUGTRACE_MODEL_NAME=... GEMINI_API_KEY=... make docker-run
+docker-run:
+	docker run --rm -p 8080:8080 -e BUGTRACE_MODEL_BACKEND -e BUGTRACE_MODEL_NAME -e GEMINI_API_KEY \
+		-e GOOGLE_CLOUD_PROJECT -e GOOGLE_CLOUD_LOCATION $(IMAGE)
+
+# Render deploy/cloud-run.service.yaml into var/deploy/service.yaml (see docs/DEPLOYMENT.md).
+cloud-run-config:
+	uv run python scripts/render_cloud_run.py

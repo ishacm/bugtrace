@@ -1,0 +1,40 @@
+# Secrets and credentials never enter the build context.
+.env
+.env.*
+*.json.key
+*credentials*.json
+service-account*.json
+
+# Local state, caches and tooling
+.git
+.github
+.venv
+venv
+var
+logs
+evaluation_results
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+.idea
+.vscode
+
+# Not needed at runtime
+tests
+evals
+docs
+tasks
+scripts
+deploy
+Dockerfile
+.dockerignore
+CLAUDE.md
+CLAUDE_PROMPTS.md
+PROGRESS.md
+Makefile

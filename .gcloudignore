@@ -1,0 +1,7 @@
+# Source upload for `gcloud builds submit`. Secrets and local state never leave this machine.
+#!include:.gitignore
+.git
+.env
+.env.*
+.venv
+var

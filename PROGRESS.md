@@ -4,7 +4,7 @@
 V1
 
 ## Current task
-TASK 011 — Vertex AI + Cloud Run
+TASK 012 — Polish + optional V3 extension
 
 ## Completed
 - [x] TASK 001 — Bootstrap
@@ -17,7 +17,7 @@ TASK 011 — Vertex AI + Cloud Run
 - [x] TASK 008 — Patch proposal + human approval
 - [x] TASK 009 — SWE-bench evaluation
 - [x] TASK 010 — Regression evals + CI
-- [ ] TASK 011 — Vertex AI + Cloud Run
+- [x] TASK 011 — Vertex AI + Cloud Run
 - [ ] TASK 012 — Polish + optional V3 extension
 
 ## Tests
@@ -79,6 +79,20 @@ A new autouse fixture removes `GEMINI_API_KEY` from every test.
 Ran 4× back to back: deterministic. Workflows validated with `actionlint` 1.7.12 (no findings). A clean-checkout simulation (fresh git repo, no `.env`, no venv, no key, `env -i`, CI env vars) ran `uv sync --locked`, `make lint` and `make test`: 295 passed, 2 skipped, and it wrote `var/evals/regression.json`. The workflows have not run on GitHub yet: this repository has no remote.
 
 Stub baseline (`evals/baselines/stub.json`): produced by the deterministic stub run, not a model benchmark. 10 scenarios; 9 COMPLETED reports; 8 patches proposed; 7 applied; 4 graded; 2 resolved; top-1 1.0 and top-3 0.5 (fixture reference only); grounding 1.0; 0 unauthorized writes; 50 tool calls. **No live baseline exists. No live agent evaluation has been run** (needs the Gemini key/quota and, with `--approve-patches`, Docker).
+
+TASK 011: `make format`, `make lint` clean; `make test` — 330 passed, 2 skipped. 35 new tests in `tests/test_cloud.py`, with no GCP credentials, network or Docker:
+- Configuration: local defaults have no project, region or model. The vertex backend is selected from env. Unknown backends are rejected. `PORT` overrides `BUGTRACE_PORT`, and an invalid port is rejected. `model_config_problem` names each missing variable.
+- Backend selection: gemini builds an API-key client (`vertexai=False`, even with `GOOGLE_GENAI_USE_VERTEXAI` set). Vertex builds an ADC client with the configured project and location and no API key, even when no credentials exist. The Vertex client shares the retry and structured-output path. `LocalBackend` switches with no agent change, and no `app/agent` module other than `model_client.py` mentions a backend. `app/` contains no hard-coded region, project or model ID.
+- Evaluation: the disabled evaluator returns UNAVAILABLE/`EVALUATION_DISABLED` and never constructs `GoldSource` or runs the Docker preflight. Evaluation stays enabled locally by default.
+- Readiness: 200 with a vertex config. 503 when the project is missing, or when there are no cases. Liveness stays 200. The API key never appears in the body.
+- Deployment-critical: the server binds `PORT`. Shutdown takes less than 10s. JSON log lines are single-line with `severity` and a stack trace. The Dockerfile is exec-form CMD, non-root, pins uv, runs `uv sync --locked --no-dev`, and has no secrets. The Dockerfile's ENV yields production settings: 0.0.0.0:8080, JSON logs, evaluation disabled, every state path under `/tmp/bugtrace`. `.dockerignore` and `.gcloudignore` exclude `.env`, `var` and `.git`. The service template renders, and rejects missing, unsafe or injected values.
+
+Docker is not installed, so **the image build was not run**. Validated instead:
+- `uv sync --locked --no-dev --no-install-project` into a fresh venv: imports OK, no pytest.
+- `python -m app.serve` from a copy of the image contents, under `env -i` with the Dockerfile's env and a fake vertex config: `/api/health` 200, `/api/ready` 200 `ready`, UI/static 200, JSON logs, clean SIGTERM shutdown.
+- The local `.env` still builds `GeminiModelClient`.
+
+`gcloud` is not installed. **Nothing has been deployed to GCP, and no live Vertex AI call has been made.**
 
 ## Blockers
 None. Real SWE-bench grading needs Docker, which is not installed here.
@@ -142,8 +156,17 @@ None. Real SWE-bench grading needs Docker, which is not installed here.
 - New make targets: `regression` (writes `var/evals/regression.json`), `regression-baseline`, `agent-eval` (`ARGS=...`).
 - `REGRESSION_REPORT_PATH` (env) makes the regression suite write its JSON report.
 
+- Cloud (TASK 011). `ModelClient` is unchanged. `GenAIModelClient` holds the shared generation, retry and validation logic. `GeminiModelClient` (API key) and `VertexModelClient` (ADC, `vertexai=True`) differ only in how the SDK client is built. `BUGTRACE_MODEL_BACKEND=gemini|vertex`. Vertex needs `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, with no defaults. The doc's `gemini_api` value is spelled `gemini`, the existing value.
+- Production entrypoint: `python -m app.serve` (uvicorn, `log_config=None`, proxy headers, 8s graceful shutdown). `make dev` is unchanged. `BUGTRACE_LOG_FORMAT=json` sends one Cloud Logging line per record, including uvicorn access logs.
+- `GET /api/ready` checks storage, cases and model configuration, and reports evaluation (informational). It returns 503 if a check fails. It never calls the model, so it cannot detect a missing Vertex IAM permission.
+- `Dockerfile`: two stages, python:3.12-slim-bookworm, uv 0.12.24 in the build stage only. The runtime has git and no Docker. It runs as non-root. All state is under `/tmp/bugtrace`.
+- `deploy/cloud-run.service.yaml` is rendered by `make cloud-run-config` (`scripts/render_cloud_run.py`). Settings: maxScale 1, `cpu-throttling: false`, gen2, 2 CPU / 4Gi, request timeout 3600s, startup probe `/api/ready`, liveness `/api/health`. The service is IAM-protected; do not grant `allUsers`.
+- **SQLite on Cloud Run is not durable.** The DB and LangGraph checkpoints live on the instance's in-memory filesystem and are lost on scale-to-zero, redeploy or replacement. The deployment is single-instance and demo-grade. Durable persistence (Cloud SQL Postgres plus a Postgres checkpointer) is not implemented.
+- Cloud Run evaluation is disabled (`BUGTRACE_EVALUATION_ENABLED=false` → `DisabledEvaluator`, new failure reason `EVALUATION_DISABLED`). Approved patches are applied, and the case ends UNRESOLVED / NOT EVALUATED. Gold data is never loaded in the cloud.
+- New make targets: `docker-build`, `docker-run`, `cloud-run-config`.
+
 ## Notes
 Update this file after every task. Do not record fabricated benchmark results.
 
 ## Next task
-TASK 011 — Vertex AI + Cloud Run
+TASK 012 — Polish + optional V3 extension

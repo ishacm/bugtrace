@@ -271,6 +271,29 @@ class SwebenchEvaluator:
         return finish(outcome.status, outcome.message, outcome.failure_reason, outcome)
 
 
+class DisabledEvaluator:
+    """Evaluator for deployments without Docker (the Cloud Run web service).
+
+    It never loads reference data and never starts the harness; the case ends
+    UNRESOLVED with no test verdict. Grade such patches locally or in GitHub Actions."""
+
+    async def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
+        return failed_result(
+            request,
+            EvaluationStatus.UNAVAILABLE,
+            "EVALUATION_DISABLED",
+            "SWE-bench evaluation is disabled in this deployment; "
+            "run it locally or in GitHub Actions.",
+            datetime.now(UTC),
+        )
+
+
+def build_evaluator(settings: Settings) -> Evaluator:
+    if not settings.evaluation_enabled:
+        return DisabledEvaluator()
+    return SwebenchEvaluator.from_settings(settings)
+
+
 def failed_result(
     request: EvaluationRequest,
     status: EvaluationStatus,

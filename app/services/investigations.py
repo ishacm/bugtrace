@@ -25,7 +25,7 @@ from app.data.store import read_cases
 from app.evaluation.evaluator import (
     EvaluationRefusedError,
     Evaluator,
-    SwebenchEvaluator,
+    build_evaluator,
     build_request,
     failed_result,
 )
@@ -133,7 +133,7 @@ class InvestigationService:
             max_iterations=settings.agent_max_iterations,
             max_tool_calls=settings.agent_max_tool_calls,
             checkpoint_path=settings.checkpoint_path,
-            evaluator=evaluator or SwebenchEvaluator.from_settings(settings),
+            evaluator=evaluator or build_evaluator(settings),
             max_patch_attempts=settings.agent_max_patch_attempts,
         )
 
