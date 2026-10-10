@@ -42,7 +42,12 @@ class Settings(BaseSettings):
     # Postgres connection URL; Vercel's Postgres integrations inject DATABASE_URL/POSTGRES_URL.
     database_url: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices("BUGTRACE_DATABASE_URL", "DATABASE_URL", "POSTGRES_URL"),
+        validation_alias=AliasChoices(
+            "BUGTRACE_DATABASE_URL",
+            "DATABASE_URL_DATABASE_URL",  # Vercel Neon integration with DATABASE_URL prefix
+            "DATABASE_URL",
+            "POSTGRES_URL",
+        ),
     )
     log_level: str = "INFO"
     log_format: Literal["text", "json"] = "text"  # json: one structured line per record (Cloud Run)
