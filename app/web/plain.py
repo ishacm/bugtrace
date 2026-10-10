@@ -147,6 +147,7 @@ _ERROR_TEXT: dict[str, str] = {
     "NO VALID PATCH": "Could not produce a safe code fix",
     "PATCH NOT APPLIED": "The approved fix could not be applied",
     "INVESTIGATION FAILED": "The investigation stopped because of an error",
+    "STEP RETRY": "A step was interrupted and will be retried",
 }
 
 

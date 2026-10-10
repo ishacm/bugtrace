@@ -20,7 +20,12 @@ from app.agent.models import (
 )
 from app.data.models import PublicCase
 from app.evaluation.models import EvaluationResult
-from app.services.investigations import CaseNotFoundError, InvestigationService
+from app.services.investigations import (
+    CaseNotFoundError,
+    InvestigationService,
+    StepResult,
+    StepwiseDisabledError,
+)
 from app.storage.models import (
     Approval,
     ApprovalDecision,
@@ -115,6 +120,14 @@ class InvestigationResponse(BaseModel):
         )
 
 
+class AdvanceResponse(BaseModel):
+    """Outcome of one bounded stepwise step (see InvestigationService.advance)."""
+
+    result: StepResult
+    pending: bool  # call advance again: the run has more work it can do now
+    investigation: InvestigationResponse
+
+
 def get_service(request: Request) -> InvestigationService:
     return request.app.state.investigations
 
@@ -174,3 +187,22 @@ async def decide(
     except (DecisionConflictError, InvalidTransitionError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return InvestigationResponse.from_stored(stored)
+
+
+@router.post("/{investigation_id}/advance")
+async def advance(investigation_id: UUID, service: Service) -> AdvanceResponse:
+    """Stepwise (serverless) mode: run the next bounded step and persist it.
+
+    Idempotent and safe to call concurrently: "busy" while another request holds the
+    step, "idle" while awaiting a decision or finished. 409 in background mode."""
+    try:
+        outcome = await service.advance(str(investigation_id))
+    except InvestigationNotFoundError as exc:
+        raise _not_found(investigation_id) from exc
+    except StepwiseDisabledError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return AdvanceResponse(
+        result=outcome.result,
+        pending=outcome.pending,
+        investigation=InvestigationResponse.from_stored(outcome.stored),
+    )

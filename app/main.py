@@ -9,7 +9,7 @@ from app.api.cases import router as cases_router
 from app.api.health import router as health_router
 from app.api.investigations import router as investigations_router
 from app.config import Settings, get_settings
-from app.evaluation.evaluator import Evaluator
+from app.evaluation.boundary import Evaluator
 from app.services.investigations import InvestigationBackend, InvestigationService
 from app.web.pages import router as pages_router
 from app.web.stream import router as stream_router

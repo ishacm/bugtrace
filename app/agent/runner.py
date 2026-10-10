@@ -2,15 +2,21 @@
 
 The graph is checkpointed per investigation (thread id = investigation id). A run
 that proposes a patch stops at the approval interrupt; `resume_investigation`
-continues it, possibly in a later process, from the durable SQLite checkpoint.
+continues it, possibly in a later process, from the durable checkpoint.
+
+`advance_investigation` drives the same graph in bounded slices for serverless
+hosting: it continues from the latest checkpoint, starts nodes only until its
+budget is spent, and returns. Checkpoints are written synchronously after every
+node, so a later request in another process picks up exactly where it stopped.
 """
 
 import enum
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import aiosqlite
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -39,6 +45,7 @@ from app.agent.models import (
 )
 from app.agent.state import InvestigationState
 from app.agent.tools import PatchApplier, RepoToolClient, ToolExecutor
+from app.config import Settings
 from app.data import models as data_models
 from app.data.models import PublicCase
 
@@ -73,6 +80,33 @@ async def sqlite_checkpointer(path: Path) -> AsyncIterator[AsyncSqliteSaver]:
         saver = AsyncSqliteSaver(conn, serde=checkpoint_serde())
         await saver.setup()
         yield saver
+
+
+@asynccontextmanager
+async def postgres_checkpointer(url: str) -> AsyncIterator[BaseCheckpointSaver]:
+    """Durable checkpoints for hosted mode; psycopg is imported only when used.
+
+    Prepared statements are disabled so transaction-pooling endpoints work."""
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg import AsyncConnection
+    from psycopg.rows import dict_row
+
+    conn = await AsyncConnection.connect(
+        url, autocommit=True, prepare_threshold=None, row_factory=dict_row, connect_timeout=10
+    )
+    async with conn:
+        saver = AsyncPostgresSaver(conn, serde=checkpoint_serde())
+        await saver.setup()
+        yield saver
+
+
+def open_checkpointer(settings: Settings) -> AbstractAsyncContextManager[BaseCheckpointSaver]:
+    """The configured checkpointer: Postgres with Postgres storage, otherwise SQLite."""
+    if settings.storage_backend == "postgres":
+        if settings.database_url is None:  # unreachable after Settings validation
+            raise RuntimeError("Postgres checkpoints need DATABASE_URL")
+        return postgres_checkpointer(settings.database_url.get_secret_value())
+    return sqlite_checkpointer(settings.checkpoint_path)
 
 
 class InvestigationRecord(BaseModel):
@@ -141,19 +175,98 @@ async def resume_investigation(
     max_iterations: int,
     max_tool_calls: int,
     on_update: Callable[[InvestigationState], Awaitable[None]] | None = None,
+    allow_finished: bool = False,
 ) -> InvestigationState:
     """Continue a run paused at the approval interrupt with a human decision.
 
-    The decision is bound to the patch's sha256; any mismatch resumes as a rejection."""
+    The decision is bound to the patch's sha256; any mismatch resumes as a rejection.
+    `allow_finished`: return the checkpointed state when the graph already ran past
+    the interrupt (a stepwise retry after the resuming step died)."""
     executor = ToolExecutor(repo_client, max_calls=max_tool_calls)
     graph = build_graph(model, executor, patcher=patcher, checkpointer=checkpointer)
     config = _config(investigation_id, max_iterations)
     snapshot = await graph.aget_state(config)
     if APPROVAL_NODE not in snapshot.next:
+        if allow_finished and snapshot.values and not snapshot.next:
+            return InvestigationState(**snapshot.values)
         raise NotAwaitingApprovalError(f"investigation {investigation_id} is not paused")
     current = InvestigationState(**snapshot.values)
     command = Command(resume={"decision": decision, "sha256": patch_sha256})
     return await _drive(graph, command, config, current, on_update)
+
+
+class Advance(NamedTuple):
+    state: InvestigationState
+    # True when the graph ended or paused for approval; False when the budget ran out.
+    settled: bool
+    nodes: int  # nodes executed by this call
+
+
+async def advance_investigation(
+    *,
+    case: PublicCase,
+    investigation_id: str,
+    model: ModelClient,
+    repo_client: RepoToolClient,
+    checkpointer: BaseCheckpointSaver,
+    max_iterations: int,
+    max_tool_calls: int,
+    max_patch_attempts: int,
+    budget_seconds: float,
+    clock: Callable[[], float] = time.monotonic,
+    on_update: Callable[[InvestigationState], Awaitable[None]] | None = None,
+) -> Advance:
+    """Run the next slice of the graph from its latest checkpoint.
+
+    Starts the graph when no checkpoint exists; never resumes past the approval
+    interrupt (that needs a human decision, see `resume_investigation`). At least
+    one node runs per call, and no new node starts after `budget_seconds`."""
+    config = _config(investigation_id, max_iterations)
+    probe = build_graph(
+        model, ToolExecutor(repo_client, max_calls=max_tool_calls), checkpointer=checkpointer
+    )
+    snapshot = await probe.aget_state(config)
+    if snapshot.values:
+        current = InvestigationState(**snapshot.values)
+        if not snapshot.next or APPROVAL_NODE in snapshot.next:
+            return Advance(current, settled=True, nodes=0)
+        graph_input: Any = None
+        used = current.get("tool_call_count", 0)
+    else:
+        current = initial_state(
+            investigation_id=investigation_id,
+            case=case,
+            max_iterations=max_iterations,
+            max_tool_calls=max_tool_calls,
+            max_patch_attempts=max_patch_attempts,
+        )
+        graph_input = current
+        used = 0
+    # The tool budget spans the whole run, not one slice: carry the count forward.
+    executor = ToolExecutor(repo_client, max_calls=max_tool_calls)
+    executor.calls = used
+    graph = build_graph(model, executor, checkpointer=checkpointer)
+
+    deadline = clock() + budget_seconds
+    nodes = 0
+    result = current
+    stream = graph.astream(graph_input, config, stream_mode="updates", durability="sync")
+    try:
+        async for update in stream:
+            if "__interrupt__" in update:
+                continue
+            nodes += 1
+            values = (await graph.aget_state(config)).values
+            result = InvestigationState(**values)
+            if on_update is not None:
+                await on_update(result)
+            if clock() >= deadline:
+                break
+    finally:
+        await stream.aclose()
+    after = await graph.aget_state(config)
+    settled = not after.next or APPROVAL_NODE in after.next
+    return Advance(result, settled=settled, nodes=nodes)
 
 
 def _config(investigation_id: str, max_iterations: int) -> dict[str, Any]:

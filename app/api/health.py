@@ -1,3 +1,4 @@
+import shutil
 from typing import Literal
 
 from fastapi import APIRouter, Request, Response
@@ -40,6 +41,15 @@ def ready(request: Request, response: Response) -> ReadinessResponse:
     settings: Settings = request.app.state.settings
     service: InvestigationService = request.app.state.investigations
     checks = [_storage(service), _cases(service), _model(settings, service)]
+    if isinstance(service.backend, LocalBackend):
+        checks.append(_git())
+    checks.append(
+        ReadinessCheck(
+            name="execution",
+            ok=True,
+            detail=f"{settings.platform}, {settings.execution_mode}",
+        )
+    )
     checks.append(
         ReadinessCheck(
             name="evaluation",
@@ -58,7 +68,17 @@ def _storage(service: InvestigationService) -> ReadinessCheck:
         service.store.list_recent(limit=1)
     except Exception as exc:
         return ReadinessCheck(name="storage", ok=False, detail=type(exc).__name__)
-    return ReadinessCheck(name="storage", ok=True, detail="sqlite")
+    # The backend name only: never the path or URL (the URL holds credentials).
+    return ReadinessCheck(name="storage", ok=True, detail=service.store.backend)
+
+
+def _git() -> ReadinessCheck:
+    """Repository tools and workspaces run the git binary (not bundled on every host)."""
+    if shutil.which("git") is None:
+        return ReadinessCheck(
+            name="git", ok=False, detail="git binary not found; repository tools cannot run"
+        )
+    return ReadinessCheck(name="git", ok=True, detail="available")
 
 
 def _cases(service: InvestigationService) -> ReadinessCheck:

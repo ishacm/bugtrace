@@ -7,7 +7,10 @@
 <div class="investigation"
      data-investigation="{{ inv.investigation_id }}"
      data-last-seq="{{ last_seq }}"
-     data-terminal="{{ 'true' if terminal else 'false' }}">
+     data-terminal="{{ 'true' if terminal else 'false' }}"
+     data-mode="{{ 'stepwise' if deployment.stepwise else 'stream' }}"
+     data-advance="{{ 'true' if advance_pending else 'false' }}"
+     data-poll-ms="{{ poll_ms }}">
 
   <section class="case-header">
     <div class="case-header-top">
@@ -19,6 +22,11 @@
     <h1>{{ guide.title }}</h1>
     <p class="project"><strong>{{ guide.project }}</strong> — {{ guide.project_about }}</p>
     <p class="case-summary">{{ guide.summary }}</p>
+    {% if deployment.stepwise %}
+    <p class="hosted-note small">Public demo: the investigation runs in short steps while this page
+      is open, and everything shown is read back from the database. The repository copy is temporary.
+      {{ evaluation_unavailable_text }}</p>
+    {% endif %}
     <div class="disclosures">
       <details class="tech statement">
         <summary>Original bug report</summary>

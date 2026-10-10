@@ -10,6 +10,7 @@ from app.data.store import read_cases
 from app.storage.sqlite import InvestigationNotFoundError
 from app.web import plain
 from app.web.render import context, evidence_sources, render_event, templates
+from app.web.stream import deployment_of
 
 router = APIRouter(include_in_schema=False)
 
@@ -29,6 +30,7 @@ def home(request: Request, service: Service) -> HTMLResponse:
             "status_labels": plain.STATUS_LABELS,
             "flow": plain.FLOW,
             "swe_bench_explainer": plain.SWE_BENCH_EXPLAINER,
+            "deployment": deployment_of(service),
         },
     )
 
@@ -41,7 +43,9 @@ def investigation_page(investigation_id: UUID, request: Request, service: Servic
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"investigation {investigation_id} not found"
         ) from exc
-    ctx = context(stored)
+    ctx = context(stored, deployment_of(service))
+    ctx["advance_pending"] = service.needs_advance(stored)
+    ctx["poll_ms"] = int(request.app.state.settings.poll_interval_seconds * 1000)
     sources = evidence_sources(stored)
     ctx["timeline"] = [render_event(event, seq, sources) for seq, event in enumerate(stored.events)]
     return templates.TemplateResponse(request, "investigation.html", ctx)

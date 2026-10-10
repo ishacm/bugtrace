@@ -5,7 +5,7 @@
   <p class="report-summary">
   {% if e.status == "RESOLVED" %}<strong>Yes.</strong> The tests written for this bug now pass, and the project's existing tests still pass.
   {% elif e.status == "UNRESOLVED" %}<strong>No.</strong> The fix was tested, but the tests do not confirm that it fixes the bug without breaking anything.
-  {% elif e.status == "UNAVAILABLE" %}<strong>Not tested.</strong> Benchmark testing requires the local or manual evaluation environment (Docker).
+  {% elif e.status == "UNAVAILABLE" %}<strong>Not tested.</strong> {{ evaluation_unavailable_text }}
   {% elif e.status == "TIMEOUT" %}<strong>Unknown.</strong> Testing took too long and was stopped.
   {% else %}<strong>Unknown.</strong> Testing failed before it produced a result.
   {% endif %}

@@ -39,6 +39,19 @@ Readiness probe: storage, seeded cases and model configuration. `503` if a check
 Server-Sent Events stream. Replays persisted events (`id` = sequence number, resumable
 with `Last-Event-ID`), then sends `state` updates and `end`.
 
+### `POST /api/investigations/{id}/advance` (stepwise mode)
+Runs the next bounded step of a stepwise (serverless) investigation and persists it.
+Returns `{"result": "advanced"|"idle"|"busy"|"retry"|"failed", "pending": bool,
+"investigation": <same body as GET>}`. Idempotent and safe to call concurrently:
+`busy` while another request holds the step lease, `idle` while awaiting a decision or
+finished. 409 in background mode, 404/422 for unknown or malformed ids.
+
+### `GET /api/investigations/{id}/updates?after=<seq>`
+Polling equivalent of the SSE stream: `{"status", "terminal", "updated_at",
+"last_seq", "events": [{"seq", "html"}], "panels": {...}, "advance": bool}`. Events
+after `after` (default -1: all), server-rendered from persisted state; `advance` says
+whether the run has work for another `advance` call. `Cache-Control: no-store`.
+
 ## Event types
 - `case_started`
 - `repo_ready`

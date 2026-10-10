@@ -1,5 +1,8 @@
 """SQLite persistence for investigations and their event timeline.
 
+The SQL is portable: `PostgresInvestigationStore` (app/storage/postgres.py) reuses
+every query and only swaps the connection, placeholder style and row locking.
+
 The agent snapshot is stored as an `InvestigationRecord` (the same model the CLI
 exports as JSON); its events live in their own append-only table and are merged
 back in on read, so there is one record format, not two. Lifecycle events added
@@ -10,8 +13,9 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from app.agent.models import AgentEvent
 from app.agent.runner import InvestigationRecord
@@ -24,6 +28,7 @@ from app.storage.models import (
     InvalidTransitionError,
     InvestigationStatus,
     InvestigationSummary,
+    StepLease,
     StoredInvestigation,
     check_transition,
 )
@@ -59,6 +64,13 @@ CREATE TABLE IF NOT EXISTS investigation_evaluations (
     result_json      TEXT NOT NULL,
     recorded_at      TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS investigation_steps (
+    investigation_id TEXT PRIMARY KEY REFERENCES investigations(investigation_id),
+    lease_owner      TEXT,
+    lease_expires_at TEXT,
+    failures         INTEGER NOT NULL DEFAULT 0,
+    steps            INTEGER NOT NULL DEFAULT 0
+)
 """
 
 
@@ -70,15 +82,35 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _stamp(moment: datetime) -> str:
+    # Fixed-width UTC timestamps, so lease expiry compares correctly as text in both databases.
+    return moment.astimezone(UTC).isoformat(timespec="microseconds")
+
+
+def schema_statements() -> list[str]:
+    return [statement.strip() for statement in _SCHEMA.split(";") if statement.strip()]
+
+
 class InvestigationStore:
+    """SQLite store. Every method is one transaction."""
+
+    backend = "sqlite"
+    # Row lock taken before writes that read-then-insert (event seq, decisions).
+    _lock_clause = ""
+    _integrity_error: type[Exception] = sqlite3.IntegrityError
+
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _init_schema(self) -> None:
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+            for statement in schema_statements():
+                conn.execute(statement)
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
+    def _connect(self) -> Iterator[Any]:
         with closing(sqlite3.connect(self.path, timeout=30)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
@@ -117,7 +149,7 @@ class InvestigationStore:
         `event` is appended in the same transaction, so readers never see the new
         status without the lifecycle event that explains it."""
         with self._connect() as conn:
-            current = InvestigationStatus(self._row(conn, investigation_id)["status"])
+            current = InvestigationStatus(self._row(conn, investigation_id, lock=True)["status"])
             check_transition(current, target)
             conn.execute(
                 "UPDATE investigations SET status = ?, error = COALESCE(?, error),"
@@ -131,7 +163,7 @@ class InvestigationStore:
     def save_record(self, record: InvestigationRecord) -> None:
         """Persist an agent snapshot and append any events not yet stored."""
         with self._connect() as conn:
-            self._row(conn, record.investigation_id)
+            self._row(conn, record.investigation_id, lock=True)
             conn.execute(
                 "UPDATE investigations SET record_json = ?, updated_at = ?"
                 " WHERE investigation_id = ?",
@@ -160,7 +192,7 @@ class InvestigationStore:
             else InvestigationStatus.UNRESOLVED
         )
         with self._connect() as conn:
-            row = self._row(conn, investigation_id)
+            row = self._row(conn, investigation_id, lock=True)
             current = InvestigationStatus(row["status"])
             if current != InvestigationStatus.AWAITING_APPROVAL:
                 raise DecisionConflictError(f"investigation is {current}, not AWAITING_APPROVAL")
@@ -175,7 +207,7 @@ class InvestigationStore:
                     " patch_sha256, decided_at) VALUES (?, ?, ?, ?, ?)",
                     (investigation_id, decision.value, patch["patch_id"], patch["sha256"], _now()),
                 )
-            except sqlite3.IntegrityError as exc:
+            except self._integrity_error as exc:
                 raise DecisionConflictError("a decision was already recorded") from exc
             conn.execute(
                 "UPDATE investigations SET status = ?, updated_at = ? WHERE investigation_id = ?",
@@ -197,7 +229,7 @@ class InvestigationStore:
             else InvestigationStatus.UNRESOLVED
         )
         with self._connect() as conn:
-            current = InvestigationStatus(self._row(conn, investigation_id)["status"])
+            current = InvestigationStatus(self._row(conn, investigation_id, lock=True)["status"])
             if current != InvestigationStatus.EVALUATING:
                 raise InvalidTransitionError(current, target)
             conn.execute(
@@ -214,8 +246,66 @@ class InvestigationStore:
 
     def append_event(self, investigation_id: str, event: AgentEvent) -> None:
         with self._connect() as conn:
-            self._row(conn, investigation_id)
+            self._row(conn, investigation_id, lock=True)
             self._insert_events(conn, investigation_id, [event], source="service")
+
+    # --- stepwise execution leases ---------------------------------------------
+
+    def acquire_step(
+        self, investigation_id: str, owner: str, lease_seconds: float
+    ) -> StepLease | None:
+        """Take the run's step lease, or None while another request holds a live one.
+
+        A lease that expired without being released means the process driving that
+        step died (or was killed by the platform); it counts as a failed step, so
+        repeated crashes stay bounded by `failures`."""
+        now = datetime.now(UTC)
+        with self._connect() as conn:
+            self._row(conn, investigation_id, lock=True)
+            conn.execute(
+                "INSERT INTO investigation_steps (investigation_id, failures, steps)"
+                " VALUES (?, 0, 0) ON CONFLICT (investigation_id) DO NOTHING",
+                (investigation_id,),
+            )
+            row = conn.execute(
+                "SELECT lease_owner, lease_expires_at, failures, steps"
+                " FROM investigation_steps WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            if row["lease_owner"] is not None and row["lease_expires_at"] > _stamp(now):
+                return None
+            abandoned = row["lease_owner"] is not None
+            failures = row["failures"] + (1 if abandoned else 0)
+            conn.execute(
+                "UPDATE investigation_steps SET lease_owner = ?, lease_expires_at = ?,"
+                " failures = ?, steps = steps + 1 WHERE investigation_id = ?",
+                (
+                    owner,
+                    _stamp(now + timedelta(seconds=lease_seconds)),
+                    failures,
+                    investigation_id,
+                ),
+            )
+        return StepLease(
+            owner=owner, failures=failures, steps=row["steps"] + 1, abandoned=abandoned
+        )
+
+    def release_step(self, investigation_id: str, owner: str, *, failed: bool) -> int:
+        """Release a lease this owner holds; returns the consecutive failure count."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT lease_owner, failures FROM investigation_steps WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            if row is None or row["lease_owner"] != owner:
+                return row["failures"] if row is not None else 0
+            failures = row["failures"] + 1 if failed else 0
+            conn.execute(
+                "UPDATE investigation_steps SET lease_owner = NULL, lease_expires_at = NULL,"
+                " failures = ? WHERE investigation_id = ? AND lease_owner = ?",
+                (failures, investigation_id, owner),
+            )
+        return failures
 
     # --- reads ----------------------------------------------------------------
 
@@ -296,30 +386,34 @@ class InvestigationStore:
 
     # --- helpers --------------------------------------------------------------
 
-    @staticmethod
-    def _row(conn: sqlite3.Connection, investigation_id: str) -> sqlite3.Row:
-        row = conn.execute(
-            "SELECT * FROM investigations WHERE investigation_id = ?", (investigation_id,)
-        ).fetchone()
+    def _row(self, conn: Any, investigation_id: str, *, lock: bool = False) -> Any:
+        query = "SELECT * FROM investigations WHERE investigation_id = ?"
+        if lock:
+            query += self._lock_clause
+        row = conn.execute(query, (investigation_id,)).fetchone()
         if row is None:
             raise InvestigationNotFoundError(investigation_id)
         return row
 
     @staticmethod
-    def _event_count(conn: sqlite3.Connection, investigation_id: str, source: str) -> int:
+    def _event_count(conn: Any, investigation_id: str, source: str) -> int:
         return conn.execute(
-            "SELECT COUNT(*) FROM investigation_events WHERE investigation_id = ? AND source = ?",
+            "SELECT COUNT(*) AS n FROM investigation_events"
+            " WHERE investigation_id = ? AND source = ?",
             (investigation_id, source),
-        ).fetchone()[0]
+        ).fetchone()["n"]
 
     @staticmethod
     def _insert_events(
-        conn: sqlite3.Connection, investigation_id: str, events: list[AgentEvent], source: str
+        conn: Any, investigation_id: str, events: list[AgentEvent], source: str
     ) -> None:
+        if not events:
+            return
         start = conn.execute(
-            "SELECT COALESCE(MAX(seq) + 1, 0) FROM investigation_events WHERE investigation_id = ?",
+            "SELECT COALESCE(MAX(seq) + 1, 0) AS next FROM investigation_events"
+            " WHERE investigation_id = ?",
             (investigation_id,),
-        ).fetchone()[0]
+        ).fetchone()["next"]
         conn.executemany(
             "INSERT INTO investigation_events (investigation_id, seq, source, event_json)"
             " VALUES (?, ?, ?, ?)",
@@ -330,7 +424,7 @@ class InvestigationStore:
         )
 
     @staticmethod
-    def _events(conn: sqlite3.Connection, investigation_id: str) -> list[AgentEvent]:
+    def _events(conn: Any, investigation_id: str) -> list[AgentEvent]:
         rows = conn.execute(
             "SELECT event_json FROM investigation_events WHERE investigation_id = ? ORDER BY seq",
             (investigation_id,),

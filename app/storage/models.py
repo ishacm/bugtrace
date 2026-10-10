@@ -97,6 +97,15 @@ class StoredInvestigation(BaseModel):
     evaluation: EvaluationResult | None = None  # gold-free benchmark verdict and metrics
 
 
+class StepLease(BaseModel):
+    """A held stepwise-execution lease (see `InvestigationStore.acquire_step`)."""
+
+    owner: str
+    failures: int  # consecutive failed or abandoned steps before this one
+    steps: int  # steps started so far, including this one
+    abandoned: bool  # the previous holder never released its lease
+
+
 class InvestigationSummary(BaseModel):
     investigation_id: str
     instance_id: str

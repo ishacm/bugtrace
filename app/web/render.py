@@ -191,9 +191,24 @@ def _citations(inv: InvestigationResponse) -> dict[str, list[str]]:
     return cited
 
 
-def context(stored: StoredInvestigation) -> dict[str, object]:
+@dataclass(frozen=True)
+class Deployment:
+    """What this deployment can do, for wording only (never secrets or config values)."""
+
+    stepwise: bool = False  # serverless demo: runs advance in steps while the page is open
+    evaluation_available: bool = True  # False: no SWE-bench harness (Cloud Run, Vercel)
+
+
+EVALUATION_UNAVAILABLE_TEXT = (
+    "Full SWE-bench evaluation requires the local/manual evaluation environment."
+)
+
+
+def context(stored: StoredInvestigation, deployment: Deployment | None = None) -> dict[str, object]:
     inv = InvestigationResponse.from_stored(stored)
     return {
+        "deployment": deployment or Deployment(),
+        "evaluation_unavailable_text": EVALUATION_UNAVAILABLE_TEXT,
         "inv": inv,
         "verdict": verdict(inv),
         "terminal": inv.status in TERMINAL_STATUSES,
@@ -209,8 +224,10 @@ def context(stored: StoredInvestigation) -> dict[str, object]:
     }
 
 
-def render_panels(stored: StoredInvestigation) -> dict[str, str]:
-    ctx = context(stored)
+def render_panels(
+    stored: StoredInvestigation, deployment: Deployment | None = None
+) -> dict[str, str]:
+    ctx = context(stored, deployment)
     return {name: templates.get_template(f"partials/{name}.html").render(ctx) for name in PANELS}
 
 

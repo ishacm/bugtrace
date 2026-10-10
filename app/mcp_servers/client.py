@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
 from mcp.types import CallToolResult
 
 from app.mcp_servers.models import (
@@ -29,10 +29,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CALL_TIMEOUT_SECONDS = 60.0
 
 
+# Environment variable through which the patch server receives a Postgres URL. Secrets
+# never go on the command line, where other processes could read them.
+DATABASE_URL_ENV = "BUGTRACE_PATCH_DATABASE_URL"
+
+
 @asynccontextmanager
-async def _stdio_session(module: str, args: list[str]) -> AsyncIterator[ClientSession]:
+async def _stdio_session(
+    module: str, args: list[str], extra_env: dict[str, str] | None = None
+) -> AsyncIterator[ClientSession]:
+    # The SDK's default environment is a small allowlist (PATH, HOME, ...), not ours.
+    env = {**get_default_environment(), **extra_env} if extra_env else None
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", module, *args], cwd=PROJECT_ROOT
+        command=sys.executable, args=["-m", module, *args], cwd=PROJECT_ROOT, env=env
     )
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
@@ -130,7 +139,10 @@ class PatchMCPClient(_MCPToolClient):
         workspaces_dir: Path,
         database_path: Path,
         call_timeout: float = DEFAULT_CALL_TIMEOUT_SECONDS,
+        *,
+        database_url: str | None = None,
     ) -> AsyncIterator["PatchMCPClient"]:
+        """`database_url` (Postgres) wins over `database_path` (SQLite)."""
         args = [
             "--investigation-id",
             investigation_id,
@@ -139,7 +151,8 @@ class PatchMCPClient(_MCPToolClient):
             "--database-path",
             str(database_path.resolve()),
         ]
-        async with _stdio_session("app.mcp_servers.patch_server", args) as session:
+        extra_env = {DATABASE_URL_ENV: database_url} if database_url else None
+        async with _stdio_session("app.mcp_servers.patch_server", args, extra_env) as session:
             yield cls(session, call_timeout)
 
     async def apply_patch(self) -> ApplyPatchResult:

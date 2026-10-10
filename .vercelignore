@@ -1,0 +1,9 @@
+# Never upload local state or secrets to Vercel (CLI deploys upload the working tree).
+.env
+.env.*
+var/
+.venv/
+**/__pycache__/
+*.db
+*.pem
+*.key

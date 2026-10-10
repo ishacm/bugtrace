@@ -145,8 +145,12 @@ def build_model_client(settings: Settings) -> ModelClient:
             location=settings.google_cloud_location or "",
             model_name=model_name,
             timeout_seconds=settings.model_timeout_seconds,
+            max_attempts=settings.model_max_attempts,
         )
     api_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else ""
     return GeminiModelClient(
-        api_key=api_key, model_name=model_name, timeout_seconds=settings.model_timeout_seconds
+        api_key=api_key,
+        model_name=model_name,
+        timeout_seconds=settings.model_timeout_seconds,
+        max_attempts=settings.model_max_attempts,
     )

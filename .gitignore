@@ -37,3 +37,4 @@ evaluation_results/
 .DS_Store
 .idea/
 .vscode/
+.vercel/

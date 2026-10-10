@@ -15,9 +15,10 @@
   {% if inv.status == "AWAITING_APPROVAL" %}
   <div class="decision">
     <p><strong>Approving only modifies BugTrace's isolated copy. Nothing is pushed to GitHub.</strong></p>
-    <p class="muted small">The fix is applied exactly as shown below and is never committed. Where
-      benchmark testing is available (a local or manual evaluation environment with Docker), the
-      project's own tests then check the fix. Rejecting leaves everything unchanged.</p>
+    <p class="muted small">The fix is applied exactly as shown below and is never committed.
+      {% if deployment.evaluation_available %}The project's own tests then check the fix in the
+      SWE-bench evaluation environment.{% else %}{{ evaluation_unavailable_text }}{% endif %}
+      Rejecting leaves everything unchanged.</p>
     <div class="decision-buttons">
       <button type="button" class="btn" data-decision="approve">Approve fix</button>
       <button type="button" class="btn btn-quiet" data-decision="reject">Reject fix</button>

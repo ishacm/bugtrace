@@ -10,6 +10,8 @@ report (CI uploads it as an artifact).
 
 import json
 import os
+import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -24,6 +26,7 @@ from app.agent.models import AgentEvent
 from app.agent.patches import patch_sha256
 from app.api.investigations import InvestigationResponse
 from app.config import Settings
+from app.data.models import PublicCase
 from app.data.store import write_cases
 from app.data.swebench import public_case_from_row
 from app.evaluation.evaluator import EvaluationRefusedError, build_request
@@ -489,3 +492,65 @@ def test_metrics_are_measured_not_invented(suite: Suite) -> None:
         if o.scenario["evaluator"]["kind"] == "harness"
     }
     assert located == harness
+
+
+# --- serverless: request -> process destroyed -> new process -> next request ----------
+
+
+def _stepwise_process(root: Path, origin: Path, steps: int, inv: str | None = None) -> dict:
+    command = [
+        sys.executable,
+        "-m",
+        "tests.fixtures.stepwise_process",
+        "--root",
+        str(root),
+        "--origin",
+        str(origin),
+        "--steps",
+        str(steps),
+    ]
+    if inv is not None:
+        command += ["--investigation-id", inv]
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("BUGTRACE_", "GIT_"))}
+    env.pop("GEMINI_API_KEY", None)
+    env.pop("VERCEL", None)
+    result = subprocess.run(  # noqa: S603
+        command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=300, check=True
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_stepwise_run_continues_across_destroyed_processes(
+    tmp_path: Path, fixture_repo: tuple[Path, list[str]]
+) -> None:
+    origin, shas = fixture_repo
+    case = PublicCase(
+        instance_id=INSTANCE_ID,
+        repo="owner/fixture",
+        problem_statement=CASE_STATEMENT,
+        base_commit=shas[1],
+    )
+    write_cases(tmp_path / "cases.jsonl", [case])
+
+    # Request 1 in process A: create + one bounded step; then A exits.
+    first = _stepwise_process(tmp_path, origin, steps=1)
+    inv = first["investigation_id"]
+    assert first["results"] == ["advanced"] and first["pending"]
+    assert first["status"] == "INVESTIGATING"
+    assert first["background_tasks"] == 0
+
+    # Request 2 in process B: one more step from durable state only.
+    second = _stepwise_process(tmp_path, origin, steps=1, inv=inv)
+    assert second["results"] == ["advanced"]
+    assert len(second["events"]) > len(first["events"])
+    assert second["events"][: len(first["events"])] == first["events"]
+
+    # Process C finishes the run.
+    final = _stepwise_process(tmp_path, origin, steps=200, inv=inv)
+    assert final["status"] == "UNRESOLVED" and not final["pending"]
+    assert final["events"].count("repo_ready") == 1
+    assert final["events"].count("case_started") == 1
+    stored = InvestigationStore(tmp_path / "db" / "bugtrace.db").get(inv)
+    assert stored.record is not None and stored.record.final_report is not None
+    assert stored.record.final_report.status == "COMPLETED"
+    assert [s.path for s in stored.record.suspects] == ["pkg/core.py"]

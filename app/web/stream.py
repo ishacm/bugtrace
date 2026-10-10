@@ -1,4 +1,4 @@
-"""Server-Sent Events for a single investigation, read from persistence.
+"""Live updates for a single investigation, read from persistence: SSE and polling.
 
 The stream is a read-only view over SQLite: it polls the stored investigation and
 emits events it has not sent yet. The background run never depends on a client,
@@ -10,6 +10,11 @@ Messages:
 - `timeline` (id = seq): `{"seq", "event", "html"}` for each persisted event.
 - `state`: `{"status", "terminal", "updated_at", "panels"}` whenever the state changed.
 - `end`: `{"status"}` once the investigation is terminal and fully delivered.
+
+`GET .../updates?after=<seq>` is the polling equivalent used in stepwise
+(serverless) mode, where no request may stay open for a whole run: one JSON
+snapshot with the same server-rendered fragments, plus whether the run needs
+another `advance`. The cursor makes reconnects lossless, as with SSE.
 """
 
 import asyncio
@@ -19,17 +24,21 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.investigations import Service
 from app.services.investigations import InvestigationService
 from app.storage.models import TERMINAL_STATUSES
 from app.storage.sqlite import InvestigationNotFoundError
-from app.web.render import evidence_sources, render_event, render_panels
+from app.web.render import Deployment, evidence_sources, render_event, render_panels
 
 router = APIRouter(prefix="/api/investigations")
 
 HEARTBEAT_SECONDS = 15.0
+
+
+def deployment_of(service: InvestigationService) -> Deployment:
+    return Deployment(stepwise=service.stepwise, evaluation_available=service.evaluation_available)
 
 
 def sse(event: str, data: object, *, id: int | None = None) -> str:
@@ -76,7 +85,7 @@ async def investigation_stream(
                     "status": stored.status,
                     "terminal": terminal,
                     "updated_at": stored.updated_at.isoformat(),
-                    "panels": render_panels(stored),
+                    "panels": render_panels(stored, deployment_of(service)),
                 },
             )
         if terminal:
@@ -128,3 +137,34 @@ def stream_events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/{investigation_id}/updates")
+def poll_updates(
+    investigation_id: UUID,
+    service: Service,
+    after: Annotated[int, Query(ge=-1)] = -1,
+) -> JSONResponse:
+    """Events after `after` and the current panels, all from persisted state."""
+    try:
+        stored = service.get(str(investigation_id))
+    except InvestigationNotFoundError as exc:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"investigation {investigation_id} not found"
+        ) from exc
+    cursor = min(after, len(stored.events) - 1)
+    sources = evidence_sources(stored)
+    events = [
+        {"seq": seq, "html": render_event(event, seq, sources)}
+        for seq, event in enumerate(stored.events[cursor + 1 :], start=cursor + 1)
+    ]
+    payload = {
+        "status": stored.status,
+        "terminal": stored.status in TERMINAL_STATUSES,
+        "updated_at": stored.updated_at.isoformat(),
+        "last_seq": len(stored.events) - 1,
+        "events": events,
+        "panels": render_panels(stored, deployment_of(service)),
+        "advance": service.needs_advance(stored),
+    }
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})

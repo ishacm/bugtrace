@@ -147,7 +147,11 @@ def _imported_modules(path: Path) -> set[str]:
 # Outside app/evaluation, only the gold-free result models may be imported, plus the
 # evaluator entry points by the service layer that runs evaluation after approval.
 GOLD_FREE_EVALUATION_MODULES = {"app.evaluation.models"}
-EVALUATION_ENTRY_POINTS = {"app.evaluation.evaluator", "app.evaluation.metrics"}
+EVALUATION_ENTRY_POINTS = {
+    "app.evaluation.boundary",
+    "app.evaluation.evaluator",
+    "app.evaluation.metrics",
+}
 EVALUATION_RUNNERS = {ROOT / "app" / "services" / "investigations.py", ROOT / "app" / "main.py"}
 
 

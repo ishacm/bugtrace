@@ -66,3 +66,14 @@ any non-terminal  -> FAILED | CANCELLED   (AWAITING_APPROVAL cannot fail; it is 
 
 ## Frontend decision
 Use Jinja2 + HTML/CSS + vanilla JavaScript + Server-Sent Events. The frontend is a demo surface, not the main engineering challenge.
+
+## Execution modes
+Two ways to drive the same graph (see `docs/DEPLOYMENT.md`):
+- **background** (local, Cloud Run): `POST /api/investigations` starts an in-process
+  asyncio task that runs the whole graph; SSE streams persisted progress.
+- **stepwise** (Vercel): nothing runs after a response. `POST
+  /api/investigations/{id}/advance` takes a lease, runs a bounded slice of the graph
+  from its durable checkpoint (SQLite or Postgres), persists, and returns. The browser
+  polls `/updates` and calls `advance` while work is pending. Lifecycle statuses and
+  transitions are the same in both modes.
+

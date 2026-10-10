@@ -113,7 +113,7 @@ flowchart TD
 | [docs/AGENT.md](docs/AGENT.md) | LangGraph graph, evidence rules, loop limits |
 | [docs/MCP.md](docs/MCP.md) | Repository tools and their safety rules |
 | [docs/API.md](docs/API.md) | REST endpoints, event stream, UI |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vertex AI and Cloud Run deployment path |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vercel demo, Vertex AI and Cloud Run deployment paths |
 
 <br>
 
@@ -179,6 +179,80 @@ make eval-integration   # opt-in real SWE-bench check
 
 <br>
 
+## Deploy to Vercel
+
+A serverless public demo of the same app, for Vercel's Hobby plan and a free Postgres
+database. Local mode is unchanged and remains the full-featured mode.
+
+**How it works.** Vercel serves the existing FastAPI app (`app.main:app`), templates
+and static files. A Vercel Function can't keep working after it responds, so in Vercel
+mode an investigation runs in **bounded steps**. While the page is open, the browser
+calls `POST /api/investigations/{id}/advance`, and each call runs the next LangGraph
+node(s) from the durable checkpoint, for about 40 s at most. The page polls
+`GET /api/investigations/{id}/updates` every ~1.5 s instead of using SSE. Any instance
+can take the next step; a lease stops two from running at once, and failed steps are
+retried a bounded number of times.
+
+**Persistence.** Investigations, events, approvals and LangGraph checkpoints live in
+Postgres (`DATABASE_URL`), so a refresh, a cold start or a new instance continues the
+run. Vercel mode refuses to start without it and never falls back to SQLite. Any
+Postgres works; Neon (Vercel Marketplace) and Supabase have free tiers with quotas.
+
+**Limitations.**
+- Only the seeded SWE-bench cases can be investigated. The repository copy is a
+  temporary clone in the function's `/tmp`, re-cloned whenever a step lands on an
+  instance without it. Persistent Git workspaces are not supported on Vercel.
+- Runs progress only while the page is open.
+- The repository tools need the `git` binary, which Vercel does not document for its
+  Python runtime; `/api/ready` reports whether it is there.
+- No authentication or rate limiting: anyone with the URL spends your Gemini quota.
+- **SWE-bench Docker evaluation is disabled.** Approved patches are applied to the
+  temporary copy and recorded, then the case ends "not tested". Full SWE-bench
+  evaluation requires the local/manual evaluation environment.
+
+**Prerequisites:** a GitHub repository, a Vercel Hobby account, a Postgres database,
+and a Gemini API key.
+
+| Variable | Value |
+|---|---|
+| `BUGTRACE_PLATFORM` | `vercel` (auto-detected from Vercel's `VERCEL=1`; set it explicitly) |
+| `BUGTRACE_MODEL_BACKEND` | `gemini` |
+| `BUGTRACE_MODEL_NAME` | your Gemini model id |
+| `GEMINI_API_KEY` | your key (mark it Sensitive) |
+| `DATABASE_URL` | `postgresql://...` (injected by the Neon integration) |
+
+**Steps:**
+1. Push the repo to GitHub.
+2. In Vercel, import the repository (FastAPI and the entrypoint are detected).
+3. Choose the Hobby plan.
+4. Connect a Postgres database (or add `DATABASE_URL` yourself).
+5. Add the variables above.
+6. Deploy.
+7. Check `/api/health` (`ok`), then `/api/ready`: it should say `ready`, with
+   `storage: postgres` and `git: available`.
+8. Open the deployment URL.
+
+Details, the full environment matrix and what is and isn't validated:
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#vercel-serverless-public-demo).
+
+| Capability | Local | Vercel | Cloud Run |
+|---|---|---|---|
+| FastAPI UI | Yes | Yes | Yes |
+| Gemini (API key) | Yes | Yes | Possible (Vertex is the default) |
+| Vertex AI | Yes | Not configured | Yes |
+| SQLite | Yes (default) | No | Yes (ephemeral) |
+| Postgres | Optional | Required | Optional, not validated |
+| Durable investigation state | Yes (disk) | Yes (Postgres) | No (lost with the instance) |
+| Repository workspace | Persistent per investigation | Temporary `/tmp`, re-cloned per step if missing | Temporary, per instance |
+| Human approval | Yes | Yes | Yes |
+| Patch application | Yes | Yes (temporary copy) | Yes |
+| SWE-bench Docker evaluation | Yes (needs Docker) | No | No |
+| SSE | Yes (UI default) | Not used | Yes |
+| Polling | Optional (`stepwise` mode) | Yes (UI default) | Not used |
+| Deployment status | Runs locally | Configured, simulated locally, **not deployed** | Configured, **not deployed** |
+
+<br>
+
 ## Benchmark design
 
 Generation and evaluation are kept apart.
@@ -224,6 +298,7 @@ responses or pages.
 | Gemini live investigation | Supported, subject to API quota |
 | Vertex AI backend | Implemented, not deployed |
 | Cloud Run deployment path | Implemented, not deployed |
+| Vercel serverless demo path | Implemented and simulated locally, not deployed |
 
 No benchmark success rate is claimed. Results will be published only after real harness
 runs.
@@ -247,7 +322,7 @@ It is not intended to repair live production repositories autonomously.
 
 ## Tech
 
-Python · FastAPI · LangGraph · MCP · Pydantic · Gemini / Vertex AI · SQLite · Jinja · JavaScript · SWE-bench · pytest · GitHub Actions
+Python · FastAPI · LangGraph · MCP · Pydantic · Gemini / Vertex AI · SQLite / Postgres · Jinja · JavaScript · SWE-bench · pytest · GitHub Actions
 
 <br>
 
