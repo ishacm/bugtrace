@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.cases import router as cases_router
@@ -23,9 +24,10 @@ def create_app(
     backend: InvestigationBackend | None = None,
     evaluator: Evaluator | None = None,
 ) -> FastAPI:
+    resolved = settings or get_settings()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        resolved = settings or get_settings()
         service = InvestigationService.from_settings(resolved, backend, evaluator)
         service.recover()
         app.state.settings = resolved
@@ -34,6 +36,14 @@ def create_app(
         await service.shutdown()
 
     app = FastAPI(title="BugTrace", version="0.1.0", lifespan=lifespan)
+    if resolved.frontend_origin:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[resolved.frontend_origin.rstrip("/")],
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type"],
+        )
     app.include_router(health_router)
     app.include_router(cases_router)
     app.include_router(investigations_router)
