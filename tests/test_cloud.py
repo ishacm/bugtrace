@@ -494,7 +494,7 @@ def test_cloud_run_template_renders() -> None:
     for value in DEPLOY_ENV.values():
         assert value in rendered
     assert 'autoscaling.knative.dev/maxScale: "1"' in rendered
-    assert 'run.googleapis.com/execution-environment: gen2' in rendered
+    assert "run.googleapis.com/execution-environment: gen2" in rendered
     assert re.search(r"startupProbe:\s+httpGet:\s+path: /api/ready", rendered)
     assert re.search(r"livenessProbe:\s+httpGet:\s+path: /api/health", rendered)
     assert re.search(r"name: BUGTRACE_EVALUATION_ENABLED\s+value: \"false\"", rendered)
