@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', path='bugtrace.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body data-api-base="{{ request.app.state.settings.api_base_url.rstrip('/') }}">
   <header class="masthead">
     <a class="brand" href="/">BUG<span>TRACE</span></a>
     <span class="tagline">Evidence-based investigation of real software bugs</span>

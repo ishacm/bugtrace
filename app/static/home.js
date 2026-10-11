@@ -3,6 +3,8 @@
   "use strict";
 
   const errorLine = document.getElementById("open-error");
+  const apiBase = document.body.dataset.apiBase || "";
+  const apiUrl = (path) => `${apiBase}${path}`;
 
   document.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-open-case]");
@@ -10,7 +12,7 @@
     button.disabled = true;
     errorLine.hidden = true;
     try {
-      const response = await fetch("/api/investigations", {
+      const response = await fetch(apiUrl("/api/investigations"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instance_id: button.dataset.openCase }),

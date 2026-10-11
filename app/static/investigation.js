@@ -10,6 +10,8 @@
   if (!root) return;
 
   const id = root.dataset.investigation;
+  const apiBase = document.body.dataset.apiBase || "";
+  const apiUrl = (path) => `${apiBase}${path}`;
   const timeline = document.getElementById("timeline");
   const timelineEmpty = document.getElementById("timeline-empty");
   const streamState = document.getElementById("stream-state");
@@ -17,7 +19,7 @@
 
   const setStreamState = (text) => { streamState.textContent = text; };
 
-  const post = (path, body) => fetch(`/api/investigations/${id}/${path}`, {
+  const post = (path, body) => fetch(apiUrl(`/api/investigations/${id}/${path}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
@@ -86,7 +88,7 @@
       if (polling) return;
       polling = true;
       try {
-        const response = await fetch(`/api/investigations/${id}/updates?after=${cursor}`,
+        const response = await fetch(apiUrl(`/api/investigations/${id}/updates?after=${cursor}`),
           { cache: "no-store" });
         if (!response.ok) throw new Error(String(response.status));
         const data = await response.json();
@@ -122,7 +124,7 @@
   // --- stream (SSE) mode --------------------------------------------------------
   if (root.dataset.terminal === "true" || !("EventSource" in window)) return;
 
-  const source = new EventSource(`/api/investigations/${id}/events?after=${cursor}`);
+  const source = new EventSource(apiUrl(`/api/investigations/${id}/events?after=${cursor}`));
 
   source.addEventListener("open", () => setStreamState("Live"));
 

@@ -482,8 +482,9 @@ DEPLOY_ENV = {
     "BUGTRACE_IMAGE": "example-docker.pkg.dev/proj/repo/bugtrace:abc123",
     "BUGTRACE_SERVICE_ACCOUNT": "bugtrace-run@proj.iam.gserviceaccount.com",
     "BUGTRACE_MODEL_NAME": "configured-model",
-    "GOOGLE_CLOUD_PROJECT": "proj",
-    "GOOGLE_CLOUD_LOCATION": "example-location",
+    "BUGTRACE_FRONTEND_ORIGIN": "https://bugtrace-tau.vercel.app",
+    "BUGTRACE_DATABASE_SECRET": "bugtrace-database-url",
+    "BUGTRACE_GEMINI_SECRET": "bugtrace-gemini-api-key",
 }
 
 
@@ -493,18 +494,26 @@ def test_cloud_run_template_renders() -> None:
     for value in DEPLOY_ENV.values():
         assert value in rendered
     assert 'autoscaling.knative.dev/maxScale: "1"' in rendered
-    assert 'run.googleapis.com/cpu-throttling: "false"' in rendered
+    assert "run.googleapis.com/execution-environment: gen2" in rendered
     assert re.search(r"startupProbe:\s+httpGet:\s+path: /api/ready", rendered)
     assert re.search(r"livenessProbe:\s+httpGet:\s+path: /api/health", rendered)
     assert re.search(r"name: BUGTRACE_EVALUATION_ENABLED\s+value: \"false\"", rendered)
     assert "name: PORT" not in rendered  # reserved; Cloud Run sets it
-    assert not re.search(r"GEMINI_API_KEY|secretKeyRef|KEY|PASSWORD", rendered)
+    assert "name: DATABASE_URL" in rendered
+    assert "name: GEMINI_API_KEY" in rendered
+    assert rendered.count("secretKeyRef:") == 2
+    assert "bugtrace-database-url" in rendered
+    assert "bugtrace-gemini-api-key" in rendered
+    assert "name: BUGTRACE_STORAGE_BACKEND" in rendered
+    assert "value: postgres" in rendered
+    assert "name: BUGTRACE_EXECUTION_MODE" in rendered
+    assert "value: stepwise" in rendered
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        {"GOOGLE_CLOUD_PROJECT": ""},
+        {"BUGTRACE_DATABASE_SECRET": ""},
         {"BUGTRACE_MODEL_NAME": 'x"\n  injected: true'},
         {"BUGTRACE_IMAGE": "img with space"},
         {"BUGTRACE_SERVICE": "${OTHER}"},

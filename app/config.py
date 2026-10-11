@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     )
     log_level: str = "INFO"
     log_format: Literal["text", "json"] = "text"  # json: one structured line per record (Cloud Run)
+
+    # Hybrid deployment support: Vercel renders the UI while the browser sends API
+    # requests to the Cloud Run backend. Empty keeps same-origin behavior for local
+    # development and all-in-one deployments.
+    api_base_url: str = ""
+    frontend_origin: str | None = None
     data_dir: Path = Path("var")
     host: str = "127.0.0.1"
     # Cloud Run injects PORT; it wins over BUGTRACE_PORT.
